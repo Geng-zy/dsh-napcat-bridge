@@ -8,7 +8,7 @@ import { AiocqhttpAdapter, AiocqhttpMessageEvent, MessageType, sessionToString, 
 import { Bridge, type PromptPayload, type SentPayload, type SessionChange, type SessionInfo } from './bridge.js'
 import type { MessageChain } from './components.js'
 import { findFfmpeg, installFfmpeg, platformTag, type InstallState } from './ffmpeg.js'
-import { Media } from './media.js'
+import { Media, type ModelPart } from './media.js'
 import type { Logger } from './onebot/server.js'
 import { SessionStore, defaultDataDir } from './store.js'
 import { join } from 'node:path'
@@ -69,6 +69,7 @@ export interface Config {
   videoMaxMinutes: number
   videoTimeoutSeconds: number
   ffmpegPath: string
+  silenceToken: string
   logLevel: 'debug' | 'info' | 'warn' | 'error'
 }
 
@@ -133,6 +134,7 @@ export const Config: z<LiveConfig> = z.object({
   videoMaxMinutes: z.natural().min(1).default(10).volatile().description('超过这么长（分钟）只截封面'),
   videoTimeoutSeconds: z.natural().min(5).default(30).volatile().description('处理一个视频最多用几秒，超时只写 [视频]'),
   ffmpegPath: z.string().default('').volatile().description('ffmpeg 位置；留空先找插件自己装的，再找系统里的'),
+  silenceToken: z.string().default('[不发]').volatile().description('她的回复以这个开头时不发出去（主动唤醒时她决定不说话用）'),
   logLevel: z.union(['debug', 'info', 'warn', 'error']).default('info').volatile().description('日志级别'),
 }) as never
 
@@ -157,6 +159,8 @@ export interface NapcatService {
   rotateSession(umo: string): Promise<{ oldSessionId: string; newSessionId: string }>
   /** 图片、语音、视频 → 模型内容（按插件一的设置：语音转文字、视频抽帧、图片数量） */
   media: Media
+  /** 主动唤醒她：给这个 QQ 会话发一条内容，她一轮说完的回复照常发到 QQ（以「不发」暗号开头时不发） */
+  wake(umo: string, content: ModelPart[] | string): Promise<{ sessionId: string }>
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -229,6 +233,8 @@ export function apply(ctx: Context, live: LiveConfig): void {
     prompt: payload => ctx.serial('napcat/prompt', payload),
     sent: payload => ctx.emit('napcat/sent', payload),
     sessionChanged: change => ctx.emit('napcat/session-changed', change),
+    sendBySession: (session, chain) => adapter.sendBySession(session, chain),
+    selfId: () => adapter.bot.connections()[0]?.selfId as string | undefined,
     store: new SessionStore(join(defaultDataDir(), 'sessions.json')),
     settings: () => ({
       cwd: get('workspacePath') || process.cwd(),
@@ -257,6 +263,7 @@ export function apply(ctx: Context, live: LiveConfig): void {
       models: { private: get('privateModel'), group: get('groupModel'), adminPrivate: get('adminPrivateModel') },
       stt: sttSettings(),
       video: videoSettings(),
+      silenceToken: get('silenceToken') ?? '[不发]',
     }),
     log,
   })
@@ -283,6 +290,7 @@ export function apply(ctx: Context, live: LiveConfig): void {
     sessionInfoByUmo: umo => bridge.sessionInfoByUmo(umo),
     rotateSession: umo => bridge.rotateSession(umo),
     media,
+    wake: (umo, content) => bridge.wake(umo, content),
   }
   ctx.provide('napcat', service)
 

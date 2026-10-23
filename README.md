@@ -50,7 +50,7 @@
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.6.0
+dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.7.0
 ```
 
 然后在 profile 的 `cordis.patch.yml` 里写配置（行 id 固定是 `napcat-bridge`）：
@@ -121,6 +121,7 @@ NapCat 那边在「网络配置」里新建一个 **WebSocket 客户端**：
 | | `agentPreset` | 空 | 默认预设 |
 | | `adminPrivateAgentPreset` / `privateAgentPreset` / `groupAgentPreset` | 空 | 分类型预设 |
 | | `adminPrivateModel` / `privateModel` / `groupModel` | 空 | 分类型模型，写成 `提供方/模型` |
+| | `silenceToken` | `[不发]` | 她的回复以这个开头时不发出去（主动唤醒时她决定不说话） |
 | 指令 | `commandsEnabled` / `noPermissionReply` | `true` / `true` | QQ 指令；没有权限时回一句 |
 | 日志 | `logLevel` | `info` | 日志级别 |
 
@@ -165,6 +166,7 @@ ctx.napcat.sessionInfo(dsh会话id)       // { umo, sessionId, platformId, selfI
                                        // 建会话之前就登记好，预设里的插件在 setup 时就能查到；不是 QQ 会话时 undefined
 ctx.napcat.sessionInfoByUmo(umo)
 await ctx.napcat.rotateSession(umo)    // 换一个新的 dsh 会话，旧的留在 dsh 里；返回 { oldSessionId, newSessionId }
+await ctx.napcat.wake(umo, 内容)       // 主动唤醒她（来源 plugin:napcat-bridge-wake）；回复照常发到 QQ，以「不发」暗号开头时不发
 await ctx.napcat.media.convert(消息段)  // 图片原图、语音转文字、视频截图（按本插件的设置）→ { text, parts, used, failed }
 await ctx.napcat.media.admit(内容)      // 交给 dsh 附件服务（插件一在 napcat/prompt 之后会自动做，自己发内容时才用）
 ```

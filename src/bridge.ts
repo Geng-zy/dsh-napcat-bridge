@@ -27,6 +27,8 @@ declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     /** 从 QQ（NapCat）来的用户消息 */
     'plugin:napcat-bridge': { kind: 'plugin:napcat-bridge' }
+    /** 其他插件主动唤醒她（ctx.napcat.wake，比如定时主动聊天）；不算"人说的话" */
+    'plugin:napcat-bridge-wake': { kind: 'plugin:napcat-bridge-wake' }
   }
 }
 
@@ -61,6 +63,10 @@ export interface BridgeDeps {
   sent(payload: SentPayload): void
   /** QQ 会话换了 dsh 会话（ctx.emit('napcat/session-changed')） */
   sessionChanged(change: SessionChange): void
+  /** 按会话主动发送（没有收到的消息可回复时用，比如主动唤醒以后） */
+  sendBySession(session: MessageSession, chain: MessageChain): Promise<void>
+  /** 她自己的 QQ 号（NapCat 连上以后才有） */
+  selfId(): string | undefined
   /** 当前设置（每次用到时读取，设置页改了立即生效） */
   settings(): BridgeSettings
   /** 记住每个 QQ 会话当前的 dsh 会话 id */
@@ -97,6 +103,8 @@ export interface BridgeSettings {
   models: { private: string; group: string; adminPrivate: string }
   stt: SttSettings
   video: VideoSettings
+  /** 她回复里以这个开头时不发出去（主动唤醒时她决定不说话用） */
+  silenceToken: string
 }
 
 /** 一个 dsh 会话对应哪个 QQ 会话（本插件新增，给其他插件按会话分规则用）。 */
@@ -200,11 +208,26 @@ interface Chat {
   handle: AgentHandle
   /** 本轮最后一条模型回复的文字 */
   lastText: string
-  /** 最近一次唤醒它的事件，回复发给它 */
-  replyTo: AiocqhttpMessageEvent
+  /** 回复怎么发：最近一次唤醒它的事件；主动唤醒建的会话按会话发 */
+  send(chain: MessageChain): Promise<void>
   info: SessionInfo
   /** 新建的会话，还没交过内容给模型 */
   fresh: boolean
+}
+
+/** 建会话需要的 QQ 会话信息（从收到的消息来，或者从 unified_msg_origin 解析出来）。 */
+interface Target {
+  umo: string
+  session: MessageSession
+  isGroup: boolean
+  /** 私聊对方 / 群里每人单独会话时的这个人 */
+  userId?: string
+  groupId?: string
+  /** 用来判断是不是管理员私聊 */
+  senderId: string
+  selfId: string
+  isUnique: boolean
+  send(chain: MessageChain): Promise<void>
 }
 
 /** dsh 会话 id：napcat-<平台>-<类型>-<会话> 去掉不安全字符。 */
@@ -391,9 +414,23 @@ export class Bridge {
     return m.type === 'Plain' && s.wake.wakePrefix.includes(String(m.text).trim())
   }
 
+  private targetOf(event: AiocqhttpMessageEvent, umo: string): Target {
+    const isGroup = event.message_obj.type === MessageType.GROUP_MESSAGE
+    const isUnique = isGroup && umo !== event.unified_msg_origin
+    return {
+      umo, session: event.session, isGroup, isUnique,
+      ...(isGroup ? { groupId: String(event.getGroupId()) } : {}),
+      ...(!isGroup ? { userId: String(event.message_obj.session_id) } : isUnique ? { userId: event.getSenderId() } : {}),
+      senderId: event.getSenderId(),
+      selfId: event.getSelfId(),
+      send: chain => event.send(chain),
+    }
+  }
+
   private async dispatch(event: AiocqhttpMessageEvent, umo: string, abm: AstrBotMessage, content: ModelPart[]): Promise<void> {
-    const chat = await this.ensureChat(event, umo)
-    chat.replyTo = event
+    const target = this.targetOf(event, umo)
+    const chat = await this.ensureChat(target)
+    chat.send = target.send
     // 本插件新增：交给模型前让其他插件（记忆等）往内容里加东西
     const payload: PromptPayload = { info: chat.info, newSession: chat.fresh, message: abm, content: [...content] }
     chat.fresh = false
@@ -567,21 +604,44 @@ export class Bridge {
     return parts
   }
 
-  private ensureChat(event: AiocqhttpMessageEvent, umo: string): Promise<Chat> {
+  private ensureChat(target: Target): Promise<Chat> {
+    const umo = target.umo
     const existing = this.chats.get(umo)
     if (existing !== undefined) return Promise.resolve(existing)
     const pending = this.creating.get(umo)
     if (pending !== undefined) return pending
-    const task = this.createChat(umo, event).finally(() => this.creating.delete(umo))
+    const task = this.createChat(target).finally(() => this.creating.delete(umo))
     this.creating.set(umo, task)
     return task
   }
 
-  private async createChat(umo: string, event: AiocqhttpMessageEvent): Promise<Chat> {
+  /**
+   * 本插件新增：其他插件主动唤醒她（比如定时主动聊天）。给这个 QQ 会话的 dsh 会话发一条内容（来源 plugin:napcat-bridge-wake），
+   * 她一轮说完的回复照常发到 QQ；回复以「不发」暗号开头时不发。会话还没建过时先建。群里每人单独一个会话的 umo 不支持。
+   */
+  async wake(umo: string, content: ModelPart[] | string): Promise<{ sessionId: string }> {
+    const parts = umo.split(':')
+    if (parts.length !== 3) throw new Error('会话标识不对：' + umo)
+    const [platform, type, id] = parts
+    if (type !== MessageType.GROUP_MESSAGE && type !== MessageType.FRIEND_MESSAGE) throw new Error('只能唤醒私聊或群聊：' + umo)
+    if (id.includes('_')) throw new Error('不支持群里每人单独会话的唤醒：' + umo)
+    const selfId = this.deps.selfId()
+    if (selfId === undefined) throw new Error('NapCat 还没连上')
+    const isGroup = type === MessageType.GROUP_MESSAGE
+    const session: MessageSession = { platform_name: platform, message_type: type as MessageType, session_id: id }
+    const send = (chain: MessageChain): Promise<void> => this.deps.sendBySession(session, chain)
+    const chat = await this.ensureChat({ umo, session, isGroup, isUnique: false, ...(isGroup ? { groupId: id } : { userId: id }), senderId: isGroup ? '' : id, selfId, send })
+    const admitted = await this.deps.media.admit(typeof content === 'string' ? [{ type: 'text', text: content }] : content)
+    chat.handle.agent.followup(createUserMessage({ content: admitted as never, source: { kind: 'plugin:napcat-bridge-wake' } }))
+    return { sessionId: String((chat.handle.agent as Agent).session.id) }
+  }
+
+  private async createChat(target: Target): Promise<Chat> {
+    const umo = target.umo
     const settings = this.deps.settings()
     const sessionId = this.deps.store.get(umo) ?? dshSessionId(umo)
-    const isGroup = event.message_obj.type === MessageType.GROUP_MESSAGE
-    const adminPrivate = !isGroup && settings.admins.includes(event.getSenderId())
+    const isGroup = target.isGroup
+    const adminPrivate = !isGroup && settings.admins.includes(target.senderId)
     // 预设和模型：主人私聊 > 私聊/群聊 > 默认
     const presetId = (adminPrivate ? settings.presets.adminPrivate : '') || (isGroup ? settings.presets.group : settings.presets.private) || settings.presets.default || undefined
     const modelText = (adminPrivate ? settings.models.adminPrivate : '') || (isGroup ? settings.models.group : settings.models.private)
@@ -594,16 +654,14 @@ export class Bridge {
       ? (async (agentCtx: unknown) => { await presets.mount(agentCtx, presetId) }) as unknown as AgentSetup
       : undefined
     // 本插件新增：建会话之前先登记它对应哪个 QQ 会话（预设里的插件在 setup 时就能查到）
-    const msg = event.message_obj
-    const isUnique = isGroup && umo !== event.unified_msg_origin
     const info: SessionInfo = {
       umo,
       sessionId,
-      platformId: event.session.platform_name,
-      selfId: event.getSelfId(),
+      platformId: target.session.platform_name,
+      selfId: target.selfId,
       type: isGroup ? 'group' : 'private',
-      ...(isGroup ? { groupId: String(event.getGroupId()) } : {}),
-      ...(!isGroup ? { userId: String(msg.session_id) } : isUnique ? { userId: event.getSenderId() } : {}),
+      ...(target.groupId !== undefined ? { groupId: target.groupId } : {}),
+      ...(target.userId !== undefined ? { userId: target.userId } : {}),
       adminPrivate,
     }
     this.infos.set(sessionId, info)
@@ -622,7 +680,7 @@ export class Bridge {
       })
       this.deps.log('info', '新建会话 ' + sessionId + '（' + umo + (presetId ? '，预设 ' + presetId : '') + (chosen ? '，模型 ' + modelText : '') + '）')
     }
-    const chat: Chat = { umo, session: event.session, handle, lastText: '', replyTo: event, info, fresh: !exists }
+    const chat: Chat = { umo, session: target.session, handle, lastText: '', send: target.send, info, fresh: !exists }
     this.chats.set(umo, chat)
     this.bySession.set(String((handle.agent as Agent).session.id), umo)
     return chat
@@ -645,9 +703,15 @@ export class Bridge {
       const text = chat.lastText
       chat.lastText = ''
       if (text.trim() === '') return
+      // 本插件新增：她决定这次不说话（主动唤醒时）
+      const token = this.deps.settings().silenceToken.trim()
+      if (token !== '' && text.trim().startsWith(token)) {
+        this.deps.log('info', umo + '：她决定不发')
+        return
+      }
       const reply: MessageChain = { chain: [Plain(text)] }
-      void chat.replyTo.send(reply).then(() => {
-        this.notifySent({ umo, session: chat.replyTo.session, text, chain: reply, source: 'reply', time: Date.now() })
+      void chat.send(reply).then(() => {
+        this.notifySent({ umo, session: chat.session, text, chain: reply, source: 'reply', time: Date.now() })
       }, e => {
         this.deps.log('error', '发送回复失败（' + umo + '）: ' + (e instanceof Error ? e.message : String(e)))
       })

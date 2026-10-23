@@ -4,7 +4,7 @@ import type { AgentRegistry } from '@deepseek-ai/dsh-agent';
 import { AiocqhttpAdapter, AiocqhttpMessageEvent, MessageType, type AstrBotMessage, type MessageSession } from './adapter.js';
 import { type PromptPayload, type SentPayload, type SessionChange, type SessionInfo } from './bridge.js';
 import type { MessageChain } from './components.js';
-import { Media } from './media.js';
+import { Media, type ModelPart } from './media.js';
 export * from './adapter.js';
 export * from './components.js';
 export type { PromptPayload, SentPayload, SessionChange, SessionInfo } from './bridge.js';
@@ -60,6 +60,7 @@ export interface Config {
     videoMaxMinutes: number;
     videoTimeoutSeconds: number;
     ffmpegPath: string;
+    silenceToken: string;
     logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 /** 插件收到的配置：每项都是可实时读取的引用（.get()），设置页保存后立即更新。 */
@@ -94,6 +95,10 @@ export interface NapcatService {
     }>;
     /** 图片、语音、视频 → 模型内容（按插件一的设置：语音转文字、视频抽帧、图片数量） */
     media: Media;
+    /** 主动唤醒她：给这个 QQ 会话发一条内容，她一轮说完的回复照常发到 QQ（以「不发」暗号开头时不发） */
+    wake(umo: string, content: ModelPart[] | string): Promise<{
+        sessionId: string;
+    }>;
 }
 declare module '@deepseek-ai/cordis' {
     interface Context {

@@ -13,6 +13,10 @@ declare module '@deepseek-ai/dsh-llm' {
         'plugin:napcat-bridge': {
             kind: 'plugin:napcat-bridge';
         };
+        /** 其他插件主动唤醒她（ctx.napcat.wake，比如定时主动聊天）；不算"人说的话" */
+        'plugin:napcat-bridge-wake': {
+            kind: 'plugin:napcat-bridge-wake';
+        };
     }
 }
 export interface WakeConfig {
@@ -57,6 +61,10 @@ export interface BridgeDeps {
     sent(payload: SentPayload): void;
     /** QQ 会话换了 dsh 会话（ctx.emit('napcat/session-changed')） */
     sessionChanged(change: SessionChange): void;
+    /** 按会话主动发送（没有收到的消息可回复时用，比如主动唤醒以后） */
+    sendBySession(session: MessageSession, chain: MessageChain): Promise<void>;
+    /** 她自己的 QQ 号（NapCat 连上以后才有） */
+    selfId(): string | undefined;
     /** 当前设置（每次用到时读取，设置页改了立即生效） */
     settings(): BridgeSettings;
     /** 记住每个 QQ 会话当前的 dsh 会话 id */
@@ -122,6 +130,8 @@ export interface BridgeSettings {
     };
     stt: SttSettings;
     video: VideoSettings;
+    /** 她回复里以这个开头时不发出去（主动唤醒时她决定不说话用） */
+    silenceToken: string;
 }
 /** 一个 dsh 会话对应哪个 QQ 会话（本插件新增，给其他插件按会话分规则用）。 */
 export interface SessionInfo {
@@ -212,6 +222,7 @@ export declare class Bridge {
     /** 适配器 handle_msg 的去处。 */
     handle(abm: AstrBotMessage, event: AiocqhttpMessageEvent): Promise<void>;
     private isEmptyMention;
+    private targetOf;
     private dispatch;
     /** QQ 里的指令。返回 true 表示已处理（不再交给模型）。 */
     private command;
@@ -235,6 +246,13 @@ export declare class Bridge {
      */
     private buildContent;
     private ensureChat;
+    /**
+     * 本插件新增：其他插件主动唤醒她（比如定时主动聊天）。给这个 QQ 会话的 dsh 会话发一条内容（来源 plugin:napcat-bridge-wake），
+     * 她一轮说完的回复照常发到 QQ；回复以「不发」暗号开头时不发。会话还没建过时先建。群里每人单独一个会话的 umo 不支持。
+     */
+    wake(umo: string, content: ModelPart[] | string): Promise<{
+        sessionId: string;
+    }>;
     private createChat;
     private onSessionEvent;
     /** 发 'napcat/sent'；监听器出错不影响发送。 */

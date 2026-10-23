@@ -31,6 +31,7 @@ function settings(over = {}) {
     models: { private: '', group: '', adminPrivate: '' },
     stt: { mode: 'off', command: '', apiUrl: '', apiKey: '', model: '' },
     video: { enabled: true, maxFrames: 4, secondsPerFrame: 5, maxEdge: 1024, maxMB: 100, maxMinutes: 10, timeoutSeconds: 30, ffmpegPath: '/nonexistent/ffmpeg' },
+    silenceToken: '[不发]',
     ...over,
   }
 }
@@ -88,6 +89,8 @@ function harness(over = {}, api = {}, hooks = {}) {
     prompt: async payload => { events.prompt.push(payload); if (hooks.prompt) await hooks.prompt(payload) },
     sent: payload => events.sent.push(payload),
     sessionChanged: change => events.changed.push(change),
+    sendBySession: (session, chain) => adapter.sendBySession(session, chain),
+    selfId: () => String(BOT),
     settings: () => s,
     store: new SessionStore(join(mkdtempSync(join(tmpdir(), 'napcat-store-')), 'sessions.json')),
     log: () => {},
@@ -320,4 +323,27 @@ test('视频：关掉「图片交给模型」时不截图', async () => {
   await h.privateMsg(8, [{ type: 'video', data: { file: video } }])
   assert.equal(h.followups[0].text, '[视频]')
   assert.equal(h.followups[0].images, 0)
+})
+
+test('wake：主动唤醒一个还没建过的 QQ 会话，回复照常发出去；以「不发」开头时不发', async () => {
+  const h = harness({}, memberInfo)
+  const r = await h.bridge.wake('napcat:FriendMessage:' + ADMIN, '现在是晚上八点，要不要找主人聊天？')
+  assert.equal(r.sessionId, 'napcat-napcat-FriendMessage-' + ADMIN)
+  assert.equal(h.followups[0].text, '现在是晚上八点，要不要找主人聊天？')
+  assert.equal(h.bridge.sessionInfo(r.sessionId).adminPrivate, true, '按管理员 QQ 号认出主人私聊')
+  h.turn(r.sessionId, '主人，晚饭吃了吗？')
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(h.sent.at(-1).action, 'send_private_msg')
+  assert.equal(h.sent.at(-1).text, '主人，晚饭吃了吗？')
+  const before = h.sent.length
+  h.turn(r.sessionId, '[不发]')
+  h.turn(r.sessionId, '  [不发] 这次先不打扰了')
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(h.sent.length, before, '以「不发」开头的回复不发出去')
+  await h.bridge.wake('napcat:GroupMessage:555', [{ type: 'text', text: '看看群里' }])
+  h.turn('napcat-napcat-GroupMessage-555', '大家好')
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(h.sent.at(-1).action, 'send_group_msg')
+  await assert.rejects(h.bridge.wake('napcat:GroupMessage:9_555', 'x'), /不支持/)
+  await assert.rejects(h.bridge.wake('bad', 'x'), /会话标识不对/)
 })
