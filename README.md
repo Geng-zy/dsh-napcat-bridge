@@ -141,11 +141,13 @@ ctx.napcat.sessions()   // [{ umo, sessionId }]
 ## 开发
 
 ```bash
-pnpm install
-pnpm run build
-pnpm test        # 单元测试
-pnpm run e2e     # 端到端：真实 dsh + 假模型接口 + 假 NapCat，需要 dsh 在 PATH 上或设置 DSH_BIN
+scripts/setup-test-env.sh          # 装官方 Node 和 dsh 到 .cache/test-env（DSH_VERSION 可指定 dsh 版本）
+scripts/check.sh                   # 安装依赖、编译、单元测试、端到端测试（真实 dsh + 假模型 + 假 NapCat）、扫描密钥
+node scripts/check-upstreams.mjs   # 看 dsh、AstrBot、aiocqhttp、NapCat、Linux QQ、QFace、Node 有没有新版本（对照 upstreams.json）
+node scripts/update-qface.mjs      # 从 QFace 重新生成小黄脸名字表
 ```
+
+`lib/` 是编译产物，要提交进仓库（dsh 从 GitHub 安装时不跑构建）。
 
 ## 许可证
 

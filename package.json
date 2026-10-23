@@ -28,7 +28,10 @@
   "scripts": {
     "build": "rm -rf lib && tsc -p tsconfig.json && cp src/client/client.js lib/client.js",
     "test": "node --test test/adapter.test.mjs test/bridge.test.mjs",
-    "e2e": "node test/e2e.mjs"
+    "e2e": "node test/e2e.mjs",
+    "setup-test-env": "scripts/setup-test-env.sh",
+    "check": "scripts/check.sh",
+    "update-qface": "node scripts/update-qface.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"
