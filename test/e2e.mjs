@@ -289,7 +289,11 @@ if (!st || !st.listening || st.connections.length < 1 || st.login?.user_id !== B
 if (JSON.stringify(st).includes(TOKEN)) await fail('状态接口泄露了 Token')
 log('测试连接接口 OK（需登录、返回 QQ 号、不含 Token）')
 
-// 11. QQ 管家的消息被忽略
+// 11. 默认把当前时间和群名写进 <system_reminder>
+if (!modelFull.some(t => /<system_reminder>[\s\S]*Current datetime: \d{4}-\d{2}-\d{2}/.test(t))) await fail('模型没收到当前时间：' + modelFull.slice(-1)[0]?.slice(0, 400))
+log('当前时间提示 OK')
+
+// 12. QQ 管家的消息被忽略
 const before6 = modelRequests.length
 privateMsg([text('管家消息')], 2854196310)
 await new Promise(r => setTimeout(r, 3000))

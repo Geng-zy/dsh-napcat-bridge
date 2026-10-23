@@ -13,6 +13,7 @@
   - `astrbot/core/message/components.py` → `src/components.ts`
   - `astrbot/core/pipeline/waking_check/stage.py`（唤醒判断部分）→ `src/bridge.ts`
   - `astrbot/core/utils/quoted_message/chain_parser.py`、`extractor.py`、`onebot_client.py` → `src/quoted.ts`
+  - `astrbot/core/pipeline/whitelist_check/stage.py`、`rate_limit_check/stage.py`、`astr_main_agent.py`（`_append_system_reminders`）、`builtin_stars/astrbot/main.py`（`handle_empty_mention`）、`builtin_stars/builtin_commands`（指令的权限规则）→ `src/bridge.ts`
 
 由于移植了 AGPL 代码，本项目整体以 AGPL-3.0-or-later 发布，见 `LICENSE`。
 

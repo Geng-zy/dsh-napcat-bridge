@@ -18,11 +18,11 @@
    - **QQ 管家**（2854196310）的消息：忽略。
    - **通知、请求**：不交给模型，只通过事件广播。
 3. 每条消息都会发出 dsh 事件 `napcat/message`，给其他插件用。
-4. 按 AstrBot 的默认唤醒规则决定交不交给模型：
+4. 照 AstrBot 流水线的顺序过一遍：唤醒 → 白名单 → 指令 → 只 @ 不说话时等下一条 → 频率限制 → 语音转文字。唤醒规则同 AstrBot 默认：
    - **私聊**：都交给模型。
    - **群聊**：@ 机器人、引用机器人的消息、或以唤醒前缀（默认 `/`）开头时才交给模型，唤醒前缀会去掉。
-5. 每个会话对应一个 dsh 会话。会话标识按 AstrBot 的 `平台ID:消息类型:会话ID` 来分，群聊的会话 ID 是群号，私聊的是对方 QQ 号。
-6. 交给模型的内容：群消息前面加 `[昵称(QQ号)]`；有引用时接上 `<Quoted Message>(昵称): 内容</Quoted Message>`，引用的是聊天记录会逐层展开；直接发来的聊天记录写成 `<Forward Message>`；图片（包括商城表情、引用和聊天记录里的图片）作为附件一起交给模型。
+5. 每个会话对应一个 dsh 会话（发 /new 或 /reset 换新的），新会话按"管理员私聊 > 私聊/群聊 > 默认"选预设和模型。会话标识按 AstrBot 的 `平台ID:消息类型:会话ID` 来分，群聊的会话 ID 是群号，私聊的是对方 QQ 号。
+6. 交给模型的内容：群消息前面加 `[昵称(QQ号)]`；`<system_reminder>` 里写当前时间、群名、发送者是不是管理员；有引用时接上 `<Quoted Message>(昵称): 内容</Quoted Message>`，引用的是聊天记录会逐层展开；直接发来的聊天记录写成 `<Forward Message>`；图片（包括商城表情、引用和聊天记录里的图片）作为附件一起交给模型。
 7. 模型一轮结束后，把最后一条回复的文字发回去：私聊用 `send_private_msg`，群聊用 `send_group_msg`。
 
 ## 和 AstrBot 不同的地方
@@ -39,12 +39,16 @@
 | 群里谁在说话 | 默认不告诉模型 | 群消息前面加 `[昵称(QQ号)]`（`identifier`） |
 | 图片 | 由 AstrBot 流水线另外处理 | 作为 dsh 附件交给模型（`imageToModel`），模型要支持看图，如 deepseek-flash |
 | 引用 | 流水线整理成 `<Quoted Message>`，展开引用的聊天记录 | 照搬同样的做法 |
+| 白名单 | 只认群号或完整会话标识 | 私聊还认 QQ 号 |
+| 只 @ 不说话时等下一条 | 等这个会话里任何人的下一条 | 只等那个人的下一条 |
+| 管理员身份 | 不告诉模型 | 可以写进 `<system_reminder>` |
+| 指令 | 私聊时不带前缀也能触发 | 必须带唤醒前缀，免得聊天里说到 new 也被当成指令 |
 | 直接发来的聊天记录 | 不展开 | 展开成 `<Forward Message>` |
 
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.4.0
+dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.5.0
 ```
 
 然后在 profile 的 `cordis.patch.yml` 里写配置（行 id 固定是 `napcat-bridge`）：
@@ -76,21 +80,43 @@ NapCat 那边在「网络配置」里新建一个 **WebSocket 客户端**：
 
 ## 配置项
 
-| 配置 | 默认值 | 说明 |
-|---|---|---|
-| `id` | `napcat` | 平台 ID，会话标识的第一段 |
-| `ws_reverse_host` | `0.0.0.0` | 监听地址 |
-| `ws_reverse_port` | `6199` | 监听端口 |
-| `ws_reverse_token` | 空 | 连接 Token，留空则不校验 |
-| `wake_prefix` | `["/"]` | 唤醒前缀 |
-| `friend_message_needs_wake_prefix` | `false` | 私聊是否也需要唤醒前缀 |
-| `ignore_bot_self_message` | `false` | 是否忽略机器人自己发出的消息 |
-| `workspacePath` | 空 | QQ 会话的工作目录，留空用 dsh 进程当前目录 |
-| `agentPreset` | 空 | QQ 会话使用的 agent 预设 |
-| `identifier` | `true` | 群消息交给模型时前面加 `[昵称(QQ号)]` |
-| `imageToModel` | `true` | 图片作为附件交给模型 |
-| `maxImages` | `0` | 一条消息最多交给模型几张图片，0 = 不限 |
-| `logLevel` | `info` | 日志级别 |
+都可以在设置页里改，分组同设置页。
+
+| 分组 | 配置 | 默认值 | 说明 |
+|---|---|---|---|
+| 连接 | `ws_reverse_host` | `0.0.0.0` | 监听地址 |
+| | `ws_reverse_port` | `6199` | 监听端口 |
+| | `ws_reverse_token` | 不设 | 连接 Token，不设则不校验 |
+| | `id` | `napcat` | 平台 ID，会话标识的第一段 |
+| 访问控制 | `admins` | `[]` | 管理员 QQ 号 |
+| | `whitelistEnabled` | `true` | 启用白名单（名单为空时不检查） |
+| | `whitelist` | `[]` | 群号、QQ 号（私聊）或完整会话标识 |
+| | `whitelistIgnoreAdminOnGroup` / `…OnFriend` | `true` | 管理员不受白名单限制 |
+| | `whitelistLog` | `true` | 不在白名单时记日志 |
+| | `rateLimitCount` / `rateLimitSeconds` / `rateLimitStrategy` | `30` / `60` / `stall` | 频率限制，0 = 不限；stall 排队，discard 丢弃 |
+| 唤醒 | `wake_prefix` | `["/"]` | 唤醒前缀 |
+| | `friend_message_needs_wake_prefix` | `false` | 私聊也要唤醒前缀 |
+| | `ignore_bot_self_message` | `false` | 忽略她自己发出的消息 |
+| | `emptyMentionWaiting` / `emptyMentionNeedReply` | `true` / `true` | 只 @ 不说话时等下一条 / 先问一句 |
+| 交给模型的内容 | `identifier` | `true` | 群消息前面加 `[昵称(QQ号)]` |
+| | `markAdmin` | `true` | 发送者是管理员时告诉模型 |
+| | `groupNameDisplay` | `true` | 告诉模型群名 |
+| | `datetimeReminder` / `timezone` | `true` / `Asia/Shanghai` | 告诉模型当前时间 |
+| | `imageToModel` / `maxImages` | `true` / `0` | 图片交给模型；每条最多几张，0 = 不限 |
+| 语音转文字 | `sttMode` | `off` | `off` / `command`（本机命令）/ `openai`（兼容接口） |
+| | `sttCommand` | 空 | 本机命令，`{file}` 换成语音文件路径，输出就是文字 |
+| | `sttApiUrl` / `sttApiKey` / `sttModel` | 空 | OpenAI 兼容接口（到 /v1 为止）、Key、模型 |
+| 会话 | `workspacePath` | 空 | QQ 会话的工作目录 |
+| | `uniqueSession` | `false` | 群里每人单独一个会话 |
+| | `agentPreset` | 空 | 默认预设 |
+| | `adminPrivateAgentPreset` / `privateAgentPreset` / `groupAgentPreset` | 空 | 分类型预设 |
+| | `adminPrivateModel` / `privateModel` / `groupModel` | 空 | 分类型模型，写成 `提供方/模型` |
+| 指令 | `commandsEnabled` / `noPermissionReply` | `true` / `true` | QQ 指令；没有权限时回一句 |
+| 日志 | `logLevel` | `info` | 日志级别 |
+
+## QQ 指令
+
+以唤醒前缀开头：`/help`、`/sid`（查看会话标识，加白名单时用）、`/new`、`/reset`（换一个新的 dsh 会话）、`/stop`（停止她正在进行的回复）。群里 `/new`、`/reset` 只有管理员、群主、群管理能用。
 
 ## 给其他插件用
 

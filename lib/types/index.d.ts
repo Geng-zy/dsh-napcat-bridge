@@ -19,6 +19,35 @@ export interface Config {
     identifier: boolean;
     imageToModel: boolean;
     maxImages: number;
+    admins: string[];
+    whitelistEnabled: boolean;
+    whitelist: string[];
+    whitelistIgnoreAdminOnGroup: boolean;
+    whitelistIgnoreAdminOnFriend: boolean;
+    whitelistLog: boolean;
+    rateLimitCount: number;
+    rateLimitSeconds: number;
+    rateLimitStrategy: 'stall' | 'discard';
+    emptyMentionWaiting: boolean;
+    emptyMentionNeedReply: boolean;
+    uniqueSession: boolean;
+    datetimeReminder: boolean;
+    timezone: string;
+    groupNameDisplay: boolean;
+    markAdmin: boolean;
+    commandsEnabled: boolean;
+    noPermissionReply: boolean;
+    privateAgentPreset: string;
+    groupAgentPreset: string;
+    adminPrivateAgentPreset: string;
+    privateModel: string;
+    groupModel: string;
+    adminPrivateModel: string;
+    sttMode: 'off' | 'command' | 'openai';
+    sttCommand: string;
+    sttApiUrl: string;
+    sttApiKey: string;
+    sttModel: string;
     logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 /** 插件收到的配置：每项都是可实时读取的引用（.get()），设置页保存后立即更新。 */
