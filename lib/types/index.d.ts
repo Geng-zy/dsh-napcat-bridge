@@ -16,6 +16,9 @@ export interface Config {
     ignore_bot_self_message: boolean;
     workspacePath: string;
     agentPreset: string;
+    identifier: boolean;
+    imageToModel: boolean;
+    maxImages: number;
     logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 export declare const Config: z<Config>;

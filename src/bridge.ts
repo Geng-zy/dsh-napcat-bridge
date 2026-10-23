@@ -13,6 +13,7 @@ import {
   type AstrBotMessage, type MessageSession,
 } from './adapter.js'
 import { Plain, type Component } from './components.js'
+import { loadImage, type LoadedImage } from './images.js'
 import type { Logger } from './onebot/server.js'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -41,11 +42,21 @@ export interface BridgeDeps {
   persistence(): { stat(id: string): Promise<object | undefined> } | undefined
   /** 会话事件来源（ctx.on('session/event')） */
   onSessionEvent(listener: (session: Session, event: SessionEvent) => void): () => void
+  /** dsh 附件服务（可选；没有时图片不交给模型） */
+  attachments(): { admitPromptContent(content: readonly unknown[]): Promise<unknown[]> } | undefined
+  /** 调 OneBot API（读图片时 get_image 兜底） */
+  callAction(action: string, params: Record<string, unknown>): Promise<any>
   /** 广播给其他插件 */
   emit(abm: AstrBotMessage, event: AiocqhttpMessageEvent, isWake: boolean): void
   cwd: string
   agentPreset: string
   wake: WakeConfig
+  /** 群消息前面加 [昵称(QQ号)]，让模型知道是谁在说话 */
+  identifier: boolean
+  /** 图片交给模型 */
+  imageToModel: boolean
+  /** 一条消息最多交几张图片（含引用消息里的） */
+  maxImages: number
   log: Logger
 }
 
@@ -130,14 +141,59 @@ export class Bridge {
       this.deps.log('warn', 'napcat/message 监听器出错: ' + (e instanceof Error ? e.message : String(e)))
     }
     if (stop || !isWake) return
-    // 只有消息事件带文字；通知/请求的 message_str 为空，不交给模型
-    if (messageStr === '') return
+    // 只有消息事件交给模型；通知/请求只广播
+    if (abm.raw_message.post_type !== 'message') return
+    const own = abm.message.filter(c => c.type === 'Image')
+    const quoted = abm.message.filter(c => c.type === 'Reply').flatMap(r => ((r.chain ?? []) as Component[]).filter(c => c.type === 'Image'))
+    if (messageStr === '' && own.length === 0) return
+    const content = await this.buildContent(abm, messageStr, own, quoted)
     const chat = await this.ensureChat(event)
     chat.replyTo = event
     chat.handle.agent.followup(createUserMessage({
-      content: [{ type: 'text', text: messageStr }],
+      content: content as never,
       source: { kind: 'plugin:napcat-bridge' },
     }))
+  }
+
+  /** 交给模型的内容：（群里）[昵称(QQ号)] + 文字，后面跟图片。 */
+  private async buildContent(abm: AstrBotMessage, messageStr: string, own: Component[], quoted: Component[]): Promise<unknown[]> {
+    let text = messageStr
+    if (text === '' && own.length > 0) text = '[图片]'
+    if (this.deps.identifier && abm.type === MessageType.GROUP_MESSAGE) {
+      text = '[' + (abm.sender.nickname || abm.sender.user_id) + '(' + abm.sender.user_id + ')] ' + text
+    }
+    const attachments = this.deps.attachments()
+    if (!this.deps.imageToModel || attachments === undefined || own.length + quoted.length === 0) {
+      return [{ type: 'text', text }]
+    }
+    const parts: unknown[] = [{ type: 'text', text }]
+    let budget = this.deps.maxImages
+    let failed = 0
+    const add = async (images: Component[], label?: string): Promise<void> => {
+      const loaded: LoadedImage[] = []
+      for (const img of images) {
+        if (budget <= 0) break
+        try {
+          loaded.push(await loadImage(img, this.deps.callAction))
+          budget -= 1
+        } catch (e) {
+          failed += 1
+          this.deps.log('warn', '图片读取失败: ' + (e instanceof Error ? e.message : String(e)))
+        }
+      }
+      if (loaded.length === 0) return
+      if (label !== undefined) parts.push({ type: 'text', text: label })
+      for (const img of loaded) parts.push({ type: 'image', mediaType: img.mediaType, data: img.data, ...(img.name ? { name: img.name } : {}) })
+    }
+    await add(own)
+    await add(quoted, '（下面是被引用消息里的图片）')
+    if (failed > 0) parts.push({ type: 'text', text: '（有 ' + failed + ' 张图片没能读取）' })
+    try {
+      return await attachments.admitPromptContent(parts)
+    } catch (e) {
+      this.deps.log('warn', '图片交给 dsh 失败，只发文字: ' + (e instanceof Error ? e.message : String(e)))
+      return [{ type: 'text', text: text + '（图片没能读取）' }]
+    }
   }
 
   private ensureChat(event: AiocqhttpMessageEvent): Promise<Chat> {

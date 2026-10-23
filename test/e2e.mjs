@@ -31,6 +31,7 @@ const fail = async message => { console.error('[e2e] FAIL: ' + message); await c
 
 // ---- 假 DeepSeek（Anthropic Messages 流式），回复 = "回复:" + 最后一条用户消息的第一个文字块
 const modelRequests = []
+const modelImages = []
 const lastUserText = json => {
   const user = [...(json.messages ?? [])].reverse().find(m => m.role === 'user')
   if (!user) return ''
@@ -49,6 +50,8 @@ const llm = createServer((req, res) => {
     const json = JSON.parse(body || '{}')
     const text = lastUserText(json)
     modelRequests.push(text)
+    const user = [...(json.messages ?? [])].reverse().find(m => m.role === 'user')
+    modelImages.push(Array.isArray(user?.content) ? user.content.filter(b => b.type === 'image').length : 0)
     const reply = '回复:' + text
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
     const ev = (type, data) => res.write('event: ' + type + '\ndata: ' + JSON.stringify({ type, ...data }) + '\n\n')
@@ -62,6 +65,12 @@ const llm = createServer((req, res) => {
   })
 })
 await new Promise(r => llm.listen(0, '127.0.0.1', r))
+
+// ---- 图片服务器：给假 NapCat 的图片地址用（1x1 PNG）
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+const imgServer = createServer((_req, res) => res.writeHead(200, { 'content-type': 'image/png' }).end(PNG))
+await new Promise(r => imgServer.listen(0, '127.0.0.1', r))
+const imgUrl = 'http://127.0.0.1:' + imgServer.address().port + '/a.png'
 const llmUrl = 'http://127.0.0.1:' + llm.address().port + '/anthropic'
 
 // ---- 独立的 DSH_HOME，本仓库作为 profile bundle
@@ -102,6 +111,7 @@ async function cleanup() {
     if (dsh.exitCode === null && dsh.signalCode === null) try { dsh.kill('SIGKILL') } catch {}
   }
   llm.close()
+  imgServer.close()
   if (!process.env.E2E_KEEP) rmSync(home, { recursive: true, force: true })
 }
 
@@ -201,9 +211,9 @@ log('群里不 @ 不回 OK')
 groupMsg([at(BOT), text(' 在吗')])
 const r3 = await waitFor(() => sent.find(s => s.action === 'send_group_msg'), '群 @ 回复')
 if (r3.params.group_id !== GROUP) await fail('群回复发错群：' + JSON.stringify(r3.params))
-if (sentText(r3) !== '回复:在吗') await fail('群 @ 回复内容不对：' + sentText(r3))
+if (sentText(r3) !== '回复:[群名片(' + USER + ')] 在吗') await fail('群 @ 回复内容不对（应带发送者前缀）：' + sentText(r3))
 if (!calls.some(c => c.action === 'get_group_member_info' && c.params.user_id === BOT)) await fail('@ 没有查群名片')
-log('群 @ OK：' + sentText(r3))
+log('群 @ OK（带发送者前缀）：' + sentText(r3))
 
 // 4. 唤醒前缀 / 被去掉；@ 别人（名片为空）时查 get_stranger_info，文字里写成 @昵称(QQ)
 const groupSentBefore = sent.filter(s => s.action === 'send_group_msg').length
@@ -221,7 +231,32 @@ await waitFor(() => sent.filter(s => s.action === 'send_group_msg')[groupSentBef
 if (!calls.some(c => c.action === 'get_msg' && c.params.message_id === 4242)) await fail('引用没有调 get_msg')
 log('引用机器人唤醒 OK')
 
-// 6. QQ 管家的消息被忽略
+// 6. 图片作为附件交给模型（私聊只发图片）
+const before7 = modelRequests.length
+privateMsg([{ type: 'image', data: { file: 'a.png', url: imgUrl, summary: '[图片]' } }])
+await waitFor(() => modelRequests.length > before7, '带图片的私聊交给模型')
+if (!modelImages.slice(before7).some(n => n > 0)) await fail('模型请求里没有图片块：' + JSON.stringify(modelImages) + '\n' + dshLog.slice(-3000))
+log('图片交给模型 OK')
+
+// 7. 同一条消息重复推送只处理一次
+const before8 = modelRequests.length
+const dupId = nextMsgId++
+const dup = { post_type: 'message', message_type: 'private', sub_type: 'friend', message_id: dupId, user_id: USER, message: [text('只回一次')], raw_message: '', font: 0, sender: { user_id: USER, nickname: '主人' } }
+event(dup)
+event(dup)
+await waitFor(() => modelRequests.length > before8, '去重后的消息交给模型')
+await new Promise(r => setTimeout(r, 3000))
+if (modelRequests.slice(before8).filter(t => t === '只回一次').length !== 1) await fail('重复消息被处理了多次：' + JSON.stringify(modelRequests.slice(before8)))
+log('去重 OK')
+
+// 8. 通知（私聊戳一戳）不交给模型
+const before9 = modelRequests.length
+event({ post_type: 'notice', notice_type: 'notify', sub_type: 'poke', user_id: USER, target_id: BOT })
+await new Promise(r => setTimeout(r, 3000))
+if (modelRequests.length !== before9) await fail('通知被交给了模型')
+log('通知不交给模型 OK')
+
+// 9. QQ 管家的消息被忽略
 const before6 = modelRequests.length
 privateMsg([text('管家消息')], 2854196310)
 await new Promise(r => setTimeout(r, 3000))

@@ -40,11 +40,23 @@ export interface BridgeDeps {
     } | undefined;
     /** 会话事件来源（ctx.on('session/event')） */
     onSessionEvent(listener: (session: Session, event: SessionEvent) => void): () => void;
+    /** dsh 附件服务（可选；没有时图片不交给模型） */
+    attachments(): {
+        admitPromptContent(content: readonly unknown[]): Promise<unknown[]>;
+    } | undefined;
+    /** 调 OneBot API（读图片时 get_image 兜底） */
+    callAction(action: string, params: Record<string, unknown>): Promise<any>;
     /** 广播给其他插件 */
     emit(abm: AstrBotMessage, event: AiocqhttpMessageEvent, isWake: boolean): void;
     cwd: string;
     agentPreset: string;
     wake: WakeConfig;
+    /** 群消息前面加 [昵称(QQ号)]，让模型知道是谁在说话 */
+    identifier: boolean;
+    /** 图片交给模型 */
+    imageToModel: boolean;
+    /** 一条消息最多交几张图片（含引用消息里的） */
+    maxImages: number;
     log: Logger;
 }
 /** dsh 会话 id：napcat-<平台>-<类型>-<会话> 去掉不安全字符。 */
@@ -67,6 +79,8 @@ export declare class Bridge {
     constructor(deps: BridgeDeps);
     /** 适配器 handle_msg 的去处。 */
     handle(abm: AstrBotMessage, event: AiocqhttpMessageEvent): Promise<void>;
+    /** 交给模型的内容：（群里）[昵称(QQ号)] + 文字，后面跟图片。 */
+    private buildContent;
     private ensureChat;
     private createChat;
     private onSessionEvent;

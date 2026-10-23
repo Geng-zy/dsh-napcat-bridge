@@ -3,11 +3,19 @@
 //   astrbot/core/platform/sources/aiocqhttp/aiocqhttp_message_event.py
 //   astrbot/core/platform/astrbot_message.py、message_type.py
 // 只把消息的去向从 AstrBot 事件队列换成 onMessage 回调，转换和发送逻辑保持原样。
+//
+// v0.2.0 起在 AstrBot 的基础上做了这些改动（代码里标「改动」）：
+// 时间用 QQ 的发送时间；消息按 message_id 去重；@ 名片、陌生人昵称、群名缓存；
+// 补群名；小黄脸写成 [表情:名字]；商城表情（NapCat 以图片段发来）写成 [表情:名字]；
+// 通知和请求补上名字并写成一句话（event_text）。
 
 import { randomUUID } from 'node:crypto'
 import { CQHttp, type Logger } from './onebot/server.js'
 import { eventFromPayload, type OneBotEvent } from './onebot/event.js'
 import { ActionFailed } from './onebot/errors.js'
+import { TtlCache } from './cache.js'
+import { describeNotice, describeRequest } from './notice.js'
+import { QFACE } from './qface.js'
 import {
   At, ComponentTypes, File, Plain, Poke, convertToBase64, make, toDict, toDictAsync, toFileUri,
   type Component, type MessageChain,
@@ -48,6 +56,8 @@ export interface AstrBotMessage {
   message_str: string
   raw_message: OneBotEvent
   timestamp: number
+  /** 改动：通知和请求的中文描述（消息事件没有） */
+  event_text?: string
 }
 
 /** MessageSesion：platform_name:message_type:session_id */
@@ -77,6 +87,9 @@ export interface AdapterOptions {
 }
 
 const nowSec = (): number => Math.floor(Date.now() / 1000)
+/** 改动：用 QQ 给的发送时间，没有时才用收到的时间。 */
+const eventTime = (event: OneBotEvent): number => (Number.isInteger(event.time) && event.time > 0 ? event.time : nowSec())
+const MINUTE = 60_000
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
@@ -88,6 +101,16 @@ export class AiocqhttpAdapter {
   private port: number
   private readonly log: Logger
   private readonly onMessage: AdapterOptions['onMessage']
+  /** 改动：get_group_member_info 结果缓存 10 分钟（key 群号:QQ） */
+  private readonly memberCache = new TtlCache<Record<string, any> | null>(10 * MINUTE, 5000)
+  /** 改动：get_stranger_info 结果缓存 10 分钟 */
+  private readonly strangerCache = new TtlCache<Record<string, any> | null>(10 * MINUTE, 5000)
+  /** 改动：群名缓存 30 分钟 */
+  private readonly groupNameCache = new TtlCache<string>(30 * MINUTE, 1000)
+  /** 改动：收过的消息（去重用，key self_id:message_id），保留 10 分钟 */
+  private readonly seen = new TtlCache<true>(10 * MINUTE, 20000)
+  /** 改动：最近消息的发送者和文字，撤回通知时用来说明撤回了什么，保留 30 分钟 */
+  private readonly recent = new TtlCache<string>(30 * MINUTE, 5000)
 
   constructor(options: AdapterOptions) {
     this.id = options.id
@@ -147,6 +170,13 @@ export class AiocqhttpAdapter {
     this.log('debug', '[aiocqhttp] RawMessage ' + JSON.stringify(event))
     let abm: AstrBotMessage | null = null
     if (event.post_type === 'message') {
+      // 改动：同一条消息只处理一次（NapCat 配了两个连接、重启重报时会重复）
+      const key = String(event.self_id) + ':' + String(event.message_id)
+      if (event.message_id !== undefined && this.seen.has(key)) {
+        this.log('debug', '重复消息已忽略: ' + key)
+        return null
+      }
+      if (event.message_id !== undefined) this.seen.set(key, true)
       abm = await this.convertHandleMessageEvent(event)
       if (abm.sender.user_id === '2854196310') {
         // 屏蔽 QQ 管家的消息
@@ -162,37 +192,46 @@ export class AiocqhttpAdapter {
 
   /** _convert_handle_request_event：OneBot V11 请求类事件 */
   async convertHandleRequestEvent(event: OneBotEvent): Promise<AstrBotMessage> {
-    const sender = { user_id: String(event.user_id), nickname: String(event.user_id) }
+    // 改动：sender 昵称查真实昵称（AstrBot 直接填 QQ 号）
+    const userName = await this.displayName(event, event.user_id)
+    const sender = { user_id: String(event.user_id), nickname: userName || String(event.user_id) }
     const isGroup = Boolean(event.group_id)
     return {
       self_id: String(event.self_id),
       sender,
       type: isGroup ? MessageType.GROUP_MESSAGE : MessageType.FRIEND_MESSAGE,
-      group: isGroup ? { group_id: String(event.group_id) } : null,
+      group: isGroup ? { group_id: String(event.group_id), group_name: await this.groupName(event) } : null,
       session_id: isGroup ? String(event.group_id) : sender.user_id,
       message_str: '',
       message: [],
-      timestamp: nowSec(),
+      timestamp: eventTime(event),
       message_id: randomUUID().replace(/-/g, ''),
       raw_message: event,
+      event_text: describeRequest(event, { user: userName, operator: '', target: '' }),
     }
   }
 
   /** _convert_handle_notice_event：OneBot V11 通知类事件 */
   async convertHandleNoticeEvent(event: OneBotEvent): Promise<AstrBotMessage> {
-    const sender = { user_id: String(event.user_id), nickname: String(event.user_id) }
+    // 改动：sender 昵称查真实昵称（AstrBot 直接填 QQ 号），并写一句中文描述
+    const userName = await this.displayName(event, event.user_id)
+    const operatorName = event.operator_id !== undefined ? await this.displayName(event, event.operator_id) : ''
+    const targetName = event.target_id !== undefined ? await this.displayName(event, event.target_id) : ''
+    const recalled = event.message_id !== undefined ? this.recent.get(String(event.self_id) + ':' + String(event.message_id)) : undefined
+    const sender = { user_id: String(event.user_id), nickname: userName || String(event.user_id) }
     const isGroup = Boolean(event.group_id)
     const abm: AstrBotMessage = {
       self_id: String(event.self_id),
       sender,
       type: isGroup ? MessageType.GROUP_MESSAGE : MessageType.FRIEND_MESSAGE,
-      group: isGroup ? { group_id: String(event.group_id) } : null,
+      group: isGroup ? { group_id: String(event.group_id), group_name: await this.groupName(event) } : null,
       session_id: isGroup ? String(event.group_id) : sender.user_id,
       message_str: '',
       message: [],
       raw_message: event,
-      timestamp: nowSec(),
+      timestamp: eventTime(event),
       message_id: randomUUID().replace(/-/g, ''),
+      event_text: describeNotice(event, { user: userName, operator: operatorName, target: targetName, recalled }, String(event.self_id)),
     }
     if ('sub_type' in event) {
       if (event.sub_type === 'poke' && 'target_id' in event) {
@@ -225,7 +264,8 @@ export class AiocqhttpAdapter {
     }
     if (event.message_type === 'group') {
       abm.type = MessageType.GROUP_MESSAGE
-      abm.group = { group_id: String(event.group_id), group_name: event.group_name }
+      // 改动：NapCat 常常不带 group_name，查一次缓存起来
+      abm.group = { group_id: String(event.group_id), group_name: getReply ? await this.groupName(event) : event.group_name }
     } else if (event.message_type === 'private') {
       abm.type = MessageType.FRIEND_MESSAGE
     }
@@ -321,21 +361,13 @@ export class AiocqhttpAdapter {
               abm.message.push(At({ qq: 'all', name: '全体成员' }))
               continue
             }
-            let atInfo = await this.bot.callAction('get_group_member_info', {
-              group_id: event.group_id,
-              user_id: parseInt(String(m.data.qq), 10),
-              no_cache: false,
-              ...routingParams,
-            })
+            // 改动：两次查询都走缓存
+            let atInfo = await this.memberInfo(event.group_id, m.data.qq, routingParams)
             if (atInfo) {
               let nickname = atInfo.card ?? ''
               if (nickname === '') {
-                atInfo = await this.bot.callAction('get_stranger_info', {
-                  user_id: parseInt(String(m.data.qq), 10),
-                  no_cache: false,
-                  ...routingParams,
-                })
-                nickname = atInfo.nick || atInfo.nickname || ''
+                atInfo = await this.strangerInfo(m.data.qq, routingParams)
+                nickname = atInfo?.nick || atInfo?.nickname || ''
               }
               const isAtSelf = String(m.data.qq) === abm.self_id || String(m.data.qq) === 'all'
               abm.message.push(At({ qq: m.data.qq, name: nickname }))
@@ -355,7 +387,36 @@ export class AiocqhttpAdapter {
         }
         messageStr += atParts.join('')
       } else if (t === 'mface') {
-        continue
+        // 改动：AstrBot 直接丢掉。NapCat 把商城表情当 image 段发，这里只处理其他实现的 mface 段：有图片地址就当图片
+        for (const m of mGroup) {
+          const name = String(m.data.summary ?? '').replace(/^\[|\]$/g, '')
+          if (m.data.url) abm.message.push(make('Image', { file: m.data.url, url: m.data.url }))
+          if (name) messageStr += '[表情:' + name + ']'
+        }
+      } else if (t === 'face') {
+        // 改动：小黄脸写进文字 [表情:名字]
+        for (const m of mGroup) {
+          try {
+            abm.message.push(ComponentTypes[t](m.data))
+          } catch (e) {
+            this.log('error', '消息段解析失败: type=' + t + ', data=' + JSON.stringify(m.data) + '. ' + errText(e))
+          }
+          const name = QFACE[String(m.data.id)]
+          messageStr += '[表情:' + (name ?? String(m.data.id)) + ']'
+        }
+      } else if (t === 'image') {
+        for (const m of mGroup) {
+          try {
+            abm.message.push(ComponentTypes[t](m.data))
+          } catch (e) {
+            this.log('error', '消息段解析失败: type=' + t + ', data=' + JSON.stringify(m.data) + '. ' + errText(e))
+            continue
+          }
+          // 改动：商城表情（NapCat 带 emoji_id）在文字里写上名字
+          if (m.data.emoji_id !== undefined && m.data.summary) {
+            messageStr += '[表情:' + String(m.data.summary).replace(/^\[|\]$/g, '') + ']'
+          }
+        }
       } else if (t === 'markdown') {
         for (const m of mGroup) {
           const text = m.data.markdown || m.data.content || ''
@@ -378,10 +439,70 @@ export class AiocqhttpAdapter {
       }
     }
 
-    abm.timestamp = nowSec()
+    abm.timestamp = eventTime(event)
     abm.message_str = messageStr
     abm.raw_message = event
+    if (getReply) {
+      const preview = messageStr || (abm.message.some(c => c.type === 'Image') ? '[图片]' : '')
+      this.recent.set(abm.self_id + ':' + abm.message_id, abm.sender.nickname + '(' + abm.sender.user_id + ')：' + preview)
+    }
     return abm
+  }
+
+  /** 改动：带缓存的 get_group_member_info（失败时返回 null，不缓存）。 */
+  private async memberInfo(groupIdValue: unknown, userId: unknown, routingParams: Record<string, unknown>): Promise<Record<string, any> | null> {
+    const key = String(groupIdValue) + ':' + String(userId)
+    return this.memberCache.getOrLoad(key, () => this.bot.callAction('get_group_member_info', {
+      group_id: groupIdValue,
+      user_id: parseInt(String(userId), 10),
+      no_cache: false,
+      ...routingParams,
+    }))
+  }
+
+  /** 改动：带缓存的 get_stranger_info。 */
+  private async strangerInfo(userId: unknown, routingParams: Record<string, unknown>): Promise<Record<string, any> | null> {
+    return this.strangerCache.getOrLoad(String(userId), () => this.bot.callAction('get_stranger_info', {
+      user_id: parseInt(String(userId), 10),
+      no_cache: false,
+      ...routingParams,
+    }))
+  }
+
+  /** 改动：群名（事件里有就用并记下，没有就查 get_group_info，失败返回 undefined）。 */
+  private async groupName(event: OneBotEvent): Promise<string | undefined> {
+    if (!event.group_id) return undefined
+    const key = String(event.group_id)
+    if (event.group_name) {
+      this.groupNameCache.set(key, String(event.group_name))
+      return String(event.group_name)
+    }
+    try {
+      const routingParams = event.self_id ? { self_id: event.self_id } : {}
+      return await this.groupNameCache.getOrLoad(key, async () => {
+        const info = await this.bot.callAction('get_group_info', { group_id: event.group_id, ...routingParams })
+        return String(info?.group_name ?? '')
+      }) || undefined
+    } catch (e) {
+      this.log('debug', '获取群名失败 ' + key + ': ' + errText(e))
+      return undefined
+    }
+  }
+
+  /** 改动：某个 QQ 号的显示名：群里用名片/昵称，私聊用陌生人昵称；查不到返回空。 */
+  private async displayName(event: OneBotEvent, userId: unknown): Promise<string> {
+    if (userId === undefined || userId === null || String(userId) === '0') return ''
+    const routingParams = event.self_id ? { self_id: event.self_id } : {}
+    try {
+      if (event.group_id) {
+        const info = await this.memberInfo(event.group_id, userId, routingParams)
+        if (info && (info.card || info.nickname)) return String(info.card || info.nickname)
+      }
+      const info = await this.strangerInfo(userId, routingParams)
+      return String(info?.nick || info?.nickname || '')
+    } catch {
+      return ''
+    }
   }
 
   /** run */

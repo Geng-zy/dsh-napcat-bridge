@@ -15,6 +15,13 @@
 
 由于移植了 AGPL 代码，本项目整体以 AGPL-3.0-or-later 发布，见 `LICENSE`。
 
+## qface
+
+- 来源：npm 包 `qface` 1.4.1，<https://github.com/koishijs/QFace>
+- 许可证：MIT，作者 Shigma
+- 用到的部分：`lib/data.json` 里小黄脸编号和名字的对照 → `src/qface.ts`
+- 署名：Copyright (c) Shigma。许可文本与下面 aiocqhttp 一节的 MIT 许可全文相同（版权人换成 Shigma）。
+
 ## aiocqhttp
 
 - 来源：<https://github.com/nonebot/aiocqhttp>（1.4.4）

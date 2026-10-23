@@ -34,6 +34,8 @@ export interface AstrBotMessage {
     message_str: string;
     raw_message: OneBotEvent;
     timestamp: number;
+    /** 改动：通知和请求的中文描述（消息事件没有） */
+    event_text?: string;
 }
 /** MessageSesion：platform_name:message_type:session_id */
 export interface MessageSession {
@@ -61,6 +63,16 @@ export declare class AiocqhttpAdapter {
     private port;
     private readonly log;
     private readonly onMessage;
+    /** 改动：get_group_member_info 结果缓存 10 分钟（key 群号:QQ） */
+    private readonly memberCache;
+    /** 改动：get_stranger_info 结果缓存 10 分钟 */
+    private readonly strangerCache;
+    /** 改动：群名缓存 30 分钟 */
+    private readonly groupNameCache;
+    /** 改动：收过的消息（去重用，key self_id:message_id），保留 10 分钟 */
+    private readonly seen;
+    /** 改动：最近消息的发送者和文字，撤回通知时用来说明撤回了什么，保留 30 分钟 */
+    private readonly recent;
     constructor(options: AdapterOptions);
     /** send_by_session */
     sendBySession(session: MessageSession, messageChain: MessageChain): Promise<void>;
@@ -75,6 +87,14 @@ export declare class AiocqhttpAdapter {
      * @param getReply 是否获取回复消息。这个参数是为了防止多个回复嵌套。
      */
     convertHandleMessageEvent(event: OneBotEvent, getReply?: boolean): Promise<AstrBotMessage>;
+    /** 改动：带缓存的 get_group_member_info（失败时返回 null，不缓存）。 */
+    private memberInfo;
+    /** 改动：带缓存的 get_stranger_info。 */
+    private strangerInfo;
+    /** 改动：群名（事件里有就用并记下，没有就查 get_group_info，失败返回 undefined）。 */
+    private groupName;
+    /** 改动：某个 QQ 号的显示名：群里用名片/昵称，私聊用陌生人昵称；查不到返回空。 */
+    private displayName;
     /** run */
     run(): Promise<void>;
     /** terminate */

@@ -86,19 +86,20 @@ test('NapCat 文件：get_group_file_url 换下载地址', async () => {
   assert.deepEqual(abm.message, [{ type: 'File', name: 'a.txt', file_: '', url: 'https://f/x' }])
 })
 
-test('图片只保留 AstrBot 声明的字段；mface 丢弃；markdown 当文字；未知类型忽略', async () => {
+test('图片只保留 AstrBot 声明的字段；mface 有地址当图片、名字进文字；markdown 当文字；未知类型忽略', async () => {
   const a = adapterWith({})
   const abm = await a.convertMessage(groupEvent([
     { type: 'image', data: { file: 'a.jpg', url: 'https://img', summary: '[图片]', sub_type: 0 } },
-    { type: 'mface', data: { summary: '[表情]' } },
+    { type: 'mface', data: { summary: '[开心]', url: 'https://m/1.gif' } },
     { type: 'markdown', data: { content: '**粗**' } },
     { type: 'longmsg', data: {} },
   ]))
   assert.deepEqual(abm.message, [
     { type: 'Image', file: 'a.jpg', _type: '', url: 'https://img', path: '' },
+    { type: 'Image', file: 'https://m/1.gif', _type: '', url: 'https://m/1.gif', path: '' },
     { type: 'Plain', text: '**粗**', convert: true },
   ])
-  assert.equal(abm.message_str, '**粗**')
+  assert.equal(abm.message_str, '[表情:开心]**粗**')
 })
 
 test('QQ 管家的消息返回 null', async () => {
@@ -132,4 +133,86 @@ test('toDict：默认去掉 None、_type 改名 type、类型小写', () => {
   assert.deepEqual(toDict(make('Face', { id: 14 })), { type: 'face', data: { id: 14 } })
   assert.deepEqual(toDict(make('Reply', { id: 5 })), { type: 'reply', data: { id: '5' } })
   assert.deepEqual(toDict(make('Image', { file: 'x' })), { type: 'image', data: { file: 'x', type: '', url: '', path: '' } })
+})
+
+// ---- v0.2.0 改动 ----
+
+test('时间用 QQ 的发送时间', async () => {
+  const a = adapterWith({})
+  const ev = groupEvent([{ type: 'text', data: { text: 'x' } }])
+  ev.time = 1700000000
+  assert.equal((await a.convertMessage(ev)).timestamp, 1700000000)
+})
+
+test('同一条消息（self_id + message_id）只处理一次', async () => {
+  const a = adapterWith({})
+  const ev = groupEvent([{ type: 'text', data: { text: 'x' } }])
+  assert.notEqual(await a.convertMessage(ev), null)
+  assert.equal(await a.convertMessage({ ...ev }), null)
+  assert.notEqual(await a.convertMessage({ ...ev, message_id: 8 }), null)
+})
+
+test('@ 的名片查询有缓存：同一个人第二次不再调接口', async () => {
+  let calls = 0
+  const a = adapterWith({ get_group_member_info: () => { calls += 1; return { card: '名片' } } })
+  await a.convertMessage(groupEvent([{ type: 'at', data: { qq: '9' } }]))
+  await a.convertMessage({ ...groupEvent([{ type: 'at', data: { qq: '9' } }]), message_id: 99 })
+  assert.equal(calls, 1)
+})
+
+test('群名：事件没带时查 get_group_info 并缓存', async () => {
+  let calls = 0
+  const a = adapterWith({ get_group_info: () => { calls += 1; return { group_name: '测试群' } } })
+  const abm = await a.convertMessage(groupEvent([{ type: 'text', data: { text: 'x' } }]))
+  await a.convertMessage({ ...groupEvent([{ type: 'text', data: { text: 'y' } }]), message_id: 100 })
+  assert.equal(abm.group.group_name, '测试群')
+  assert.equal(calls, 1)
+})
+
+test('小黄脸写成 [表情:名字]；NapCat 商城表情（image 段带 emoji_id）当图片并写名字', async () => {
+  const a = adapterWith({})
+  const abm = await a.convertMessage(groupEvent([
+    { type: 'face', data: { id: '14' } },
+    { type: 'image', data: { summary: '[狗头]', file: 'ab-cd.gif', url: 'https://gxh/raw300.gif', emoji_id: 'cd', emoji_package_id: 1 } },
+    { type: 'image', data: { summary: '[图片]', file: 'p.jpg', url: 'https://img' } },
+  ]))
+  assert.equal(abm.message_str, '[表情:微笑][表情:狗头]')
+  assert.deepEqual(abm.message.map(c => c.type), ['Face', 'Image', 'Image'])
+})
+
+test('通知：进群写成一句话，名字查名片', async () => {
+  const a = adapterWith({ get_group_member_info: p => ({ card: p.user_id === 42 ? '小明' : '群主' }) })
+  const abm = await a.convertMessage({ post_type: 'notice', notice_type: 'group_increase', sub_type: 'invite', self_id: BOT, user_id: 42, operator_id: 1, group_id: 555, time: 1700000001 })
+  assert.equal(abm.event_text, '小明(42) 加入了群（被邀请）（操作人 群主(1)）')
+  assert.equal(abm.sender.nickname, '小明')
+  assert.equal(abm.timestamp, 1700000001)
+})
+
+test('通知：撤回时带上被撤回的文字', async () => {
+  const a = adapterWith({ get_group_member_info: () => ({ card: '小明' }) })
+  await a.convertMessage(groupEvent([{ type: 'text', data: { text: '说错了' } }]))
+  const abm = await a.convertMessage({ post_type: 'notice', notice_type: 'group_recall', self_id: BOT, user_id: 42, operator_id: 42, group_id: 555, message_id: 7 })
+  assert.equal(abm.event_text, '小明(42) 撤回了一条消息：昵称(42)：说错了')
+})
+
+test('通知：戳机器人', async () => {
+  const a = adapterWith({ get_stranger_info: () => ({ nickname: '路人' }) })
+  const abm = await a.convertMessage({ post_type: 'notice', notice_type: 'notify', sub_type: 'poke', self_id: BOT, user_id: 42, target_id: BOT })
+  assert.equal(abm.event_text, '路人(42) 戳了戳 机器人')
+  assert.deepEqual(abm.message, [{ type: 'Poke', _type: '126', id: String(BOT), qq: 0 }])
+})
+
+test('请求：加好友带附言', async () => {
+  const a = adapterWith({ get_stranger_info: () => ({ nickname: '路人' }) })
+  const abm = await a.convertMessage({ post_type: 'request', request_type: 'friend', self_id: BOT, user_id: 42, comment: '你好', flag: 'f' })
+  assert.equal(abm.event_text, '路人(42) 请求加好友，附言：你好')
+})
+
+test('图片格式按文件头判断', async () => {
+  const { sniffImage } = await import('../lib/images.js')
+  assert.equal(sniffImage(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'image/png')
+  assert.equal(sniffImage(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), 'image/jpeg')
+  assert.equal(sniffImage(new TextEncoder().encode('GIF89a')), 'image/gif')
+  assert.equal(sniffImage(new TextEncoder().encode('RIFF\0\0\0\0WEBP')), 'image/webp')
+  assert.equal(sniffImage(new TextEncoder().encode('hello')), undefined)
 })

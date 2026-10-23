@@ -23,6 +23,9 @@ export interface Config {
   ignore_bot_self_message: boolean
   workspacePath: string
   agentPreset: string
+  identifier: boolean
+  imageToModel: boolean
+  maxImages: number
   logLevel: 'debug' | 'info' | 'warn' | 'error'
 }
 
@@ -36,6 +39,9 @@ export const Config: z<Config> = z.object({
   ignore_bot_self_message: z.boolean().default(false).description('是否忽略机器人自己发出的消息'),
   workspacePath: z.string().default('').description('QQ 会话的工作目录（绝对路径）；留空用 dsh 进程当前目录'),
   agentPreset: z.string().default('').description('QQ 会话使用的 agent 预设 id；留空用默认预设'),
+  identifier: z.boolean().default(true).description('群消息交给模型时前面加 [昵称(QQ号)]'),
+  imageToModel: z.boolean().default(true).description('图片（含商城表情、引用消息里的图片）作为附件交给模型；模型要支持看图（如 deepseek-flash）'),
+  maxImages: z.natural().default(6).description('一条消息最多交给模型几张图片'),
   logLevel: z.union(['debug', 'info', 'warn', 'error']).default('info').description('日志级别'),
 }) as never
 
@@ -82,11 +88,13 @@ export function apply(ctx: Context, config: Config): void {
     else console.log(line)
   }
 
-  const bridge = new Bridge({
+  const bridge: Bridge = new Bridge({
     agents: ctx.agents,
     defaultModel: () => ctx.get('agentDefaultModel' as never) as Context['agentDefaultModel'],
     presets: () => ctx.get('agentPresets' as never) as Context['agentPresets'],
     persistence: () => ctx.get('sessionPersistence' as never) as Context['sessionPersistence'],
+    attachments: () => ctx.get('attachments' as never) as never,
+    callAction: (action: string, params: Record<string, unknown>): Promise<any> => adapter.bot.callAction(action, params),
     onSessionEvent: listener => ctx.on('session/event' as never, ((session: Session, event: SessionEvent) => listener(session, event)) as never),
     emit: (abm, event, isWake) => ctx.emit('napcat/message', abm, event, isWake),
     cwd: config.workspacePath || process.cwd(),
@@ -96,16 +104,19 @@ export function apply(ctx: Context, config: Config): void {
       ignoreBotSelfMessage: config.ignore_bot_self_message,
       friendMessageNeedsWakePrefix: config.friend_message_needs_wake_prefix,
     },
+    identifier: config.identifier,
+    imageToModel: config.imageToModel,
+    maxImages: config.maxImages,
     log,
   })
 
-  const adapter = new AiocqhttpAdapter({
+  const adapter: AiocqhttpAdapter = new AiocqhttpAdapter({
     id: config.id,
     ws_reverse_host: config.ws_reverse_host,
     ws_reverse_port: config.ws_reverse_port,
     ws_reverse_token: config.ws_reverse_token,
     log,
-    onMessage: (abm, event) => bridge.handle(abm, event),
+    onMessage: (abm, event): Promise<void> => bridge.handle(abm, event),
   })
 
   const service: NapcatService = {
@@ -119,7 +130,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => {
     void adapter.run().then(
       () => log('info', '反向 WebSocket 已监听 ' + config.ws_reverse_host + ':' + config.ws_reverse_port),
-      error => log('error', '启动反向 WebSocket 失败: ' + (error instanceof Error ? error.message : String(error))),
+      (error: unknown) => log('error', '启动反向 WebSocket 失败: ' + (error instanceof Error ? error.message : String(error))),
     )
     return async () => {
       await adapter.terminate()
