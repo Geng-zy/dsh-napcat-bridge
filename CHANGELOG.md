@@ -1,5 +1,9 @@
 # 更新记录
 
+## 0.5.4
+
+- 编译器升级到 TypeScript 7.0.2（原 5.9.3）。编译出来的 `lib/` 和之前逐字节相同，插件行为没有任何变化。
+
 ## 0.5.3
 
 - 修：装进 dsh profile 时 pnpm 提示 peer 依赖有问题。dsh 的包由宿主提供、不装在 profile 里（profile 设了 `autoInstallPeers: false`），现在把这些 peer 依赖标成可选；同时把版本范围改成能匹配 dsh 0.2.x 的预发布版（如 0.2.1-rc.2）。
