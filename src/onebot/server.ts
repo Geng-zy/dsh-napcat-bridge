@@ -58,6 +58,9 @@ export interface CQHttpOptions {
 
 interface WsState {
   selfId: string
+  role: string
+  remote: string
+  since: number
   isApi: boolean
   isEvent: boolean
 }
@@ -79,6 +82,8 @@ export class CQHttp {
   private readonly futures = new Map<number, Pending>()
   private readonly states = new WeakMap<WebSocket, WsState>()
   private http: Server | undefined
+  /** 本插件新增：最近一次因 Token 被拒绝的连接 */
+  lastRejected: { at: number; status: string; remote: string } | undefined
   private wss: WebSocketServer | undefined
 
   constructor(options: CQHttpOptions) {
@@ -134,6 +139,8 @@ export class CQHttp {
       }
       const denied = this.checkAuth(req)
       if (denied !== undefined) {
+        // 本插件新增：记下最近一次被拒绝的连接，设置页「测试连接」用来提示 Token 不对
+        this.lastRejected = { at: Date.now(), status: denied, remote: String(req.socket.remoteAddress ?? '') }
         socket.write('HTTP/1.1 ' + denied + '\r\n\r\n')
         socket.destroy()
         return
@@ -174,6 +181,9 @@ export class CQHttp {
     const selfId = String(req.headers['x-self-id'] ?? '')
     const state: WsState = {
       selfId,
+      role,
+      remote: String(req.socket.remoteAddress ?? ''),
+      since: Date.now(),
       isApi: role === 'api' || role === 'universal',
       isEvent: role === 'event' || role === 'universal',
     }
@@ -297,6 +307,18 @@ export class CQHttp {
     // _handle_api_result
     if (result.status === 'failed') throw new ActionFailed(result)
     return result.data
+  }
+
+  /** 本插件新增：是否正在监听 */
+  get listening(): boolean {
+    return this.http?.listening === true
+  }
+
+  /** 本插件新增：当前连着的客户端（每条连接一项） */
+  connections(): Array<{ selfId: string; role: string; remote: string; since: number }> {
+    const all = new Set<WebSocket>([...this.apiClients.values(), ...this.eventClients])
+    return [...all].map(ws => this.states.get(ws)).filter((x): x is WsState => x !== undefined)
+      .map(st => ({ selfId: st.selfId, role: st.role, remote: st.remote, since: st.since }))
   }
 
   /** bot.send_private_msg(**params) */

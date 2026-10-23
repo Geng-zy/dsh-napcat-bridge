@@ -14,6 +14,7 @@ import {
 } from './adapter.js'
 import { Plain, type Component } from './components.js'
 import { loadImage, type LoadedImage } from './images.js'
+import { extractForwards, extractQuoted } from './quoted.js'
 import type { Logger } from './onebot/server.js'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -149,9 +150,9 @@ export class Bridge {
     // 只有消息事件交给模型；通知/请求只广播
     if (abm.raw_message.post_type !== 'message') return
     const own = abm.message.filter(c => c.type === 'Image')
-    const quoted = abm.message.filter(c => c.type === 'Reply').flatMap(r => ((r.chain ?? []) as Component[]).filter(c => c.type === 'Image'))
-    if (messageStr === '' && own.length === 0) return
-    const content = await this.buildContent(abm, messageStr, own, quoted)
+    const hasForward = abm.message.some(c => c.type === 'Forward')
+    if (messageStr === '' && own.length === 0 && !hasForward) return
+    const content = await this.buildContent(abm, messageStr, own)
     const chat = await this.ensureChat(event)
     chat.replyTo = event
     chat.handle.agent.followup(createUserMessage({
@@ -160,19 +161,42 @@ export class Bridge {
     }))
   }
 
-  /** 交给模型的内容：（群里）[昵称(QQ号)] + 文字，后面跟图片。 */
-  private async buildContent(abm: AstrBotMessage, messageStr: string, own: Component[], quoted: Component[]): Promise<unknown[]> {
+  /**
+   * 交给模型的内容：（群里）[昵称(QQ号)] + 文字；有引用时接 <Quoted Message>（照 AstrBot），
+   * 有聊天记录时接 <Forward Message>（本插件新增）；最后是图片。
+   */
+  private async buildContent(abm: AstrBotMessage, messageStr: string, own: Component[]): Promise<unknown[]> {
     const settings = this.deps.settings()
+    const callAction = this.deps.callAction
+    const safe = async <T>(what: string, task: () => Promise<T>): Promise<T | null> => {
+      try {
+        return await task()
+      } catch (e) {
+        this.deps.log('warn', what + '失败: ' + (e instanceof Error ? e.message : String(e)))
+        return null
+      }
+    }
+    const quoted = await safe('整理引用内容', () => extractQuoted(abm.message, callAction))
+    const forwarded = await safe('展开聊天记录', () => extractForwards(abm.message, callAction))
+
     let text = messageStr
     if (text === '' && own.length > 0) text = '[图片]'
+    if (text === '' && forwarded !== null) text = '[聊天记录]'
     if (settings.identifier && abm.type === MessageType.GROUP_MESSAGE) {
       text = '[' + (abm.sender.nickname || abm.sender.user_id) + '(' + abm.sender.user_id + ')] ' + text
     }
+    const texts: unknown[] = [{ type: 'text', text }]
+    if (quoted !== null) texts.push({ type: 'text', text: quoted.text })
+    if (forwarded !== null) texts.push({ type: 'text', text: forwarded.text })
+
+    const asImage = (ref: string): Component => ({ type: 'Image', file: ref, url: ref.startsWith('http') ? ref : '', _type: '', path: '' })
+    const quotedImages = (quoted?.imageRefs ?? []).map(asImage)
+    const forwardImages = (forwarded?.imageRefs ?? []).map(asImage)
     const attachments = this.deps.attachments()
-    if (!settings.imageToModel || attachments === undefined || own.length + quoted.length === 0) {
-      return [{ type: 'text', text }]
+    if (!settings.imageToModel || attachments === undefined || own.length + quotedImages.length + forwardImages.length === 0) {
+      return texts
     }
-    const parts: unknown[] = [{ type: 'text', text }]
+    const parts: unknown[] = [...texts]
     let budget = settings.maxImages > 0 ? settings.maxImages : Infinity
     let failed = 0
     const add = async (images: Component[], label?: string): Promise<void> => {
@@ -180,7 +204,7 @@ export class Bridge {
       for (const img of images) {
         if (budget <= 0) break
         try {
-          loaded.push(await loadImage(img, this.deps.callAction))
+          loaded.push(await loadImage(img, callAction))
           budget -= 1
         } catch (e) {
           failed += 1
@@ -192,13 +216,14 @@ export class Bridge {
       for (const img of loaded) parts.push({ type: 'image', mediaType: img.mediaType, data: img.data, ...(img.name ? { name: img.name } : {}) })
     }
     await add(own)
-    await add(quoted, '（下面是被引用消息里的图片）')
+    await add(quotedImages, '（下面是被引用消息里的图片）')
+    await add(forwardImages, '（下面是聊天记录里的图片）')
     if (failed > 0) parts.push({ type: 'text', text: '（有 ' + failed + ' 张图片没能读取）' })
     try {
       return await attachments.admitPromptContent(parts)
     } catch (e) {
       this.deps.log('warn', '图片交给 dsh 失败，只发文字: ' + (e instanceof Error ? e.message : String(e)))
-      return [{ type: 'text', text: text + '（图片没能读取）' }]
+      return texts
     }
   }
 

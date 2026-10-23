@@ -31,6 +31,7 @@ const fail = async message => { console.error('[e2e] FAIL: ' + message); await c
 
 // ---- 假 DeepSeek（Anthropic Messages 流式），回复 = "回复:" + 最后一条用户消息的第一个文字块
 const modelRequests = []
+const modelFull = []
 const modelImages = []
 const lastUserText = json => {
   const user = [...(json.messages ?? [])].reverse().find(m => m.role === 'user')
@@ -50,6 +51,8 @@ const llm = createServer((req, res) => {
     const json = JSON.parse(body || '{}')
     const text = lastUserText(json)
     modelRequests.push(text)
+    const lastUser = [...(json.messages ?? [])].reverse().find(m => m.role === 'user')
+    modelFull.push(typeof lastUser?.content === 'string' ? lastUser.content : (lastUser?.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n'))
     const user = [...(json.messages ?? [])].reverse().find(m => m.role === 'user')
     modelImages.push(Array.isArray(user?.content) ? user.content.filter(b => b.type === 'image').length : 0)
     const reply = '回复:' + text
@@ -149,6 +152,7 @@ log('已连接')
 const calls = []
 const sent = []
 const history = new Map()
+const forwards = new Map()
 let nextMsgId = 1000
 ws.on('message', raw => {
   const req = JSON.parse(String(raw))
@@ -163,9 +167,13 @@ ws.on('message', raw => {
   } else if (req.action === 'get_stranger_info') {
     data = { user_id: req.params.user_id, nickname: '陌生人' + req.params.user_id }
   } else if (req.action === 'get_msg') {
-    data = history.get(req.params.message_id) ?? null
+    data = history.get(req.params.message_id) ?? history.get(Number(req.params.message_id ?? req.params.id)) ?? null
+  } else if (req.action === 'get_forward_msg') {
+    data = forwards.get(String(req.params.message_id ?? req.params.id)) ?? null
+  } else if (req.action === 'get_login_info') {
+    data = { user_id: BOT, nickname: '测试号' }
   }
-  ws.send(JSON.stringify({ status: data === null && req.action === 'get_msg' ? 'failed' : 'ok', retcode: 0, data, echo: req.echo }))
+  ws.send(JSON.stringify({ status: data === null && (req.action === 'get_msg' || req.action === 'get_forward_msg') ? 'failed' : 'ok', retcode: 0, data, echo: req.echo }))
 })
 
 const event = e => ws.send(JSON.stringify({ time: Math.floor(Date.now() / 1000), self_id: BOT, ...e }))
@@ -256,7 +264,32 @@ await new Promise(r => setTimeout(r, 3000))
 if (modelRequests.length !== before9) await fail('通知被交给了模型')
 log('通知不交给模型 OK')
 
-// 9. QQ 管家的消息被忽略
+// 9. 引用聊天记录：模型收到 <Quoted Message>，记录里套着的记录也展开
+forwards.set('F1', { messages: [{ sender: { nickname: '甲' }, message: [text('第一层')] }, { sender: { nickname: '乙' }, message: [{ type: 'forward', data: { id: 'F2' } }] }] })
+forwards.set('F2', { messages: [{ sender: { nickname: '丙' }, message: [text('第二层')] }] })
+history.set(5151, { message_id: 5151, message_type: 'private', self_id: BOT, time: 1, sender: { user_id: USER, nickname: '主人' }, message: [{ type: 'forward', data: { id: 'F1' } }] })
+const before10 = modelFull.length
+privateMsg([{ type: 'reply', data: { id: '5151' } }, text('总结一下')])
+await waitFor(() => modelFull.length > before10, '引用聊天记录交给模型')
+const quotedSeen = modelFull.slice(before10).join('\n')
+if (!quotedSeen.includes('<Quoted Message>') || !quotedSeen.includes('甲: 第一层') || !quotedSeen.includes('丙: 第二层')) await fail('模型没看到引用的聊天记录：' + quotedSeen.slice(0, 600))
+log('引用聊天记录展开 OK')
+
+// 10. 测试连接接口：要先登录 dsh；NapCat 已连上时返回 QQ 号
+const tokenUrl = (dshLog.match(/http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+/) ?? [])[0]
+if (!tokenUrl) await fail('dsh 日志里找不到登录网址')
+const webBase = tokenUrl.slice(0, tokenUrl.indexOf('?'))
+const anon = await fetch(webBase + 'api/napcat-bridge/status')
+if (anon.status !== 401) await fail('没登录也能访问状态接口：' + anon.status)
+const login = await fetch(tokenUrl, { redirect: 'manual' })
+const cookie = (login.headers.getSetCookie?.() ?? []).map(c => c.split(';')[0]).join('; ')
+const statusRes = await fetch(webBase + 'api/napcat-bridge/status', { headers: { cookie } })
+const st = statusRes.ok ? await statusRes.json() : null
+if (!st || !st.listening || st.connections.length < 1 || st.login?.user_id !== BOT || st.tokenSet !== true) await fail('状态接口返回不对：' + statusRes.status + ' ' + JSON.stringify(st))
+if (JSON.stringify(st).includes(TOKEN)) await fail('状态接口泄露了 Token')
+log('测试连接接口 OK（需登录、返回 QQ 号、不含 Token）')
+
+// 11. QQ 管家的消息被忽略
 const before6 = modelRequests.length
 privateMsg([text('管家消息')], 2854196310)
 await new Promise(r => setTimeout(r, 3000))

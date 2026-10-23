@@ -216,3 +216,54 @@ test('图片格式按文件头判断', async () => {
   assert.equal(sniffImage(new TextEncoder().encode('RIFF\0\0\0\0WEBP')), 'image/webp')
   assert.equal(sniffImage(new TextEncoder().encode('hello')), undefined)
 })
+
+// ---- v0.4.0：引用和聊天记录 ----
+
+test('引用：文字写成 <Quoted Message>(昵称): 内容，图片取出来', async () => {
+  const { extractQuoted } = await import('../lib/quoted.js')
+  const a = adapterWith({
+    get_msg: () => ({ message_id: 3, message_type: 'group', group_id: 555, self_id: BOT, sender: { user_id: 42, nickname: '小明' }, message: [{ type: 'text', data: { text: '看这个' } }, { type: 'image', data: { file: 'a.jpg', url: 'https://img/a' } }] }),
+  })
+  const abm = await a.convertMessage(groupEvent([{ type: 'reply', data: { id: '3' } }, { type: 'text', data: { text: '笑死' } }]))
+  const q = await extractQuoted(abm.message, (action, params) => a.bot.callAction(action, params))
+  assert.equal(q.text, '<Quoted Message>\n(小明): 看这个[Image]\n</Quoted Message>')
+  assert.deepEqual(q.imageRefs, ['https://img/a'])
+})
+
+test('引用聊天记录：get_forward_msg 逐层展开，记录里套着的记录也展开', async () => {
+  const { extractQuoted } = await import('../lib/quoted.js')
+  const calls = []
+  const api = {
+    get_msg: () => ({ message_id: 3, sender: { user_id: 42, nickname: '小明' }, message: [{ type: 'forward', data: { id: 'F1' } }] }),
+    get_forward_msg: p => {
+      calls.push(p)
+      const id = p.message_id ?? p.id
+      if (id === 'F1') return { messages: [
+        { sender: { nickname: '甲' }, message: [{ type: 'text', data: { text: '第一层' } }] },
+        { sender: { nickname: '乙' }, message: [{ type: 'forward', data: { id: 'F2' } }] },
+      ] }
+      if (id === 'F2') return { messages: [{ sender: { nickname: '丙' }, message: [{ type: 'text', data: { text: '第二层' } }, { type: 'image', data: { url: 'https://img/f2' } }] }] }
+      return null
+    },
+  }
+  const callAction = async (action, params) => api[action](params)
+  const message = [{ type: 'Reply', id: '3', chain: [{ type: 'Forward', id: 'F1' }], sender_id: '42', sender_nickname: '小明', time: 0, message_str: '', text: '', qq: 0, seq: 0 }]
+  const q = await extractQuoted(message, callAction)
+  assert.equal(q.text, '<Quoted Message>\n(小明): 甲: 第一层\n丙: 第二层[Image]\n</Quoted Message>')
+  assert.deepEqual(q.imageRefs, ['https://img/f2'])
+  assert.equal(calls.length, 2)
+})
+
+test('引用里已有文字（不只是聊天记录占位）时直接用，不再展开', async () => {
+  const { extractQuoted } = await import('../lib/quoted.js')
+  const message = [{ type: 'Reply', id: '', chain: [{ type: 'Plain', text: '原话' }, { type: 'At', qq: '9', name: '小红' }], sender_nickname: '小明', message_str: '' }]
+  const q = await extractQuoted(message, async () => { throw new Error('不应调用') })
+  assert.equal(q.text, '<Quoted Message>\n(小明): 原话@小红\n</Quoted Message>')
+})
+
+test('直接发来的聊天记录也展开成 <Forward Message>', async () => {
+  const { extractForwards } = await import('../lib/quoted.js')
+  const callAction = async () => ({ messages: [{ sender: { nickname: '甲' }, message: [{ type: 'text', data: { text: '你好' } }] }] })
+  const f = await extractForwards([{ type: 'Forward', id: 'F9' }], callAction)
+  assert.equal(f.text, '<Forward Message>\n甲: 你好\n</Forward Message>')
+})

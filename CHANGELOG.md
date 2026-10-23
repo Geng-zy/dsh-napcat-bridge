@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.4.0
+
+- 引用的消息交给模型（照搬 AstrBot 流水线的 quoted_message_parser）：写成 `<Quoted Message>(昵称): 内容</Quoted Message>`；引用的是聊天记录时调 `get_forward_msg` 展开，记录里套着的记录继续展开（最多 32 次）；引用和聊天记录里的图片一起交给模型。
+- 直接发来的聊天记录也展开，写成 `<Forward Message>…</Forward Message>`（AstrBot 没有这一项）。
+- 设置页：监听地址、端口、Token、平台 ID 放进默认收起的「连接」框；Token 下面加「测试连接」按钮；说明改成名称右上角的小角标，鼠标移上去显示。
+- 新增状态接口 `GET <dsh>/api/napcat-bridge/status`（需先登录 dsh 网页，不返回 Token），设置页的测试按钮用它。
+
 ## 0.3.0
 
 - 新增设置页：dsh 侧栏「插件」→ dsh-napcat-bridge，全部配置项可在网页里改，保存即生效；外观跟随 dsh 主题。

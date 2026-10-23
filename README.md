@@ -22,7 +22,7 @@
    - **私聊**：都交给模型。
    - **群聊**：@ 机器人、引用机器人的消息、或以唤醒前缀（默认 `/`）开头时才交给模型，唤醒前缀会去掉。
 5. 每个会话对应一个 dsh 会话。会话标识按 AstrBot 的 `平台ID:消息类型:会话ID` 来分，群聊的会话 ID 是群号，私聊的是对方 QQ 号。
-6. 交给模型的内容：群消息前面加 `[昵称(QQ号)]`；图片（包括商城表情、被引用消息里的图片）作为附件一起交给模型。
+6. 交给模型的内容：群消息前面加 `[昵称(QQ号)]`；有引用时接上 `<Quoted Message>(昵称): 内容</Quoted Message>`，引用的是聊天记录会逐层展开；直接发来的聊天记录写成 `<Forward Message>`；图片（包括商城表情、引用和聊天记录里的图片）作为附件一起交给模型。
 7. 模型一轮结束后，把最后一条回复的文字发回去：私聊用 `send_private_msg`，群聊用 `send_group_msg`。
 
 ## 和 AstrBot 不同的地方
@@ -38,11 +38,13 @@
 | 通知、请求 | 只有发送者 QQ 号，昵称也填 QQ 号 | 查真实名字，并写一句中文描述放在 `event_text`（谁进群、退群、撤回了什么、戳了谁、加好友等） |
 | 群里谁在说话 | 默认不告诉模型 | 群消息前面加 `[昵称(QQ号)]`（`identifier`） |
 | 图片 | 由 AstrBot 流水线另外处理 | 作为 dsh 附件交给模型（`imageToModel`），模型要支持看图，如 deepseek-flash |
+| 引用 | 流水线整理成 `<Quoted Message>`，展开引用的聊天记录 | 照搬同样的做法 |
+| 直接发来的聊天记录 | 不展开 | 展开成 `<Forward Message>` |
 
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.3.0
+dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.4.0
 ```
 
 然后在 profile 的 `cordis.patch.yml` 里写配置（行 id 固定是 `napcat-bridge`）：
@@ -64,6 +66,8 @@ NapCat 那边在「网络配置」里新建一个 **WebSocket 客户端**：
 ## 设置页
 
 装好后在 dsh 侧栏 **插件** → **dsh-napcat-bridge** 打开设置页，下面所有配置项都能在网页里改，点保存后立即生效，不用重启 dsh：
+- 监听地址、端口、Token、平台 ID 在默认收起的「连接」框里；Token 下面的「测试连接」会告诉你 NapCat 有没有连上、Token 对不对；
+- 每项的说明在名称右上角的小角标里，鼠标移上去显示；
 - 改了监听地址或端口，插件会自动换新地址重新监听，NapCat 会自动重连；
 - Token 不会显示出来，只提示有没有设置；留空保存表示不改；
 - 页面用 dsh 自带的表单组件和颜色，深色/浅色主题自动跟随 dsh。

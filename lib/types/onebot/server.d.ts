@@ -26,6 +26,12 @@ export declare class CQHttp {
     private readonly futures;
     private readonly states;
     private http;
+    /** 本插件新增：最近一次因 Token 被拒绝的连接 */
+    lastRejected: {
+        at: number;
+        status: string;
+        remote: string;
+    } | undefined;
     private wss;
     constructor(options: CQHttpOptions);
     /** bot.on(*event_names) */
@@ -56,6 +62,15 @@ export declare class CQHttp {
      * 返回 data 字段；status=failed 抛 ActionFailed；超时抛 NetworkError。
      */
     callAction(action: string, params?: Record<string, unknown>, eventWs?: WebSocket): Promise<any>;
+    /** 本插件新增：是否正在监听 */
+    get listening(): boolean;
+    /** 本插件新增：当前连着的客户端（每条连接一项） */
+    connections(): Array<{
+        selfId: string;
+        role: string;
+        remote: string;
+        since: number;
+    }>;
     /** bot.send_private_msg(**params) */
     sendPrivateMsg(params: Record<string, unknown>): Promise<any>;
     /** bot.send_group_msg(**params) */

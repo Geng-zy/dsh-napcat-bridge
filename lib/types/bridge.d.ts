@@ -83,7 +83,10 @@ export declare class Bridge {
     constructor(deps: BridgeDeps);
     /** 适配器 handle_msg 的去处。 */
     handle(abm: AstrBotMessage, event: AiocqhttpMessageEvent): Promise<void>;
-    /** 交给模型的内容：（群里）[昵称(QQ号)] + 文字，后面跟图片。 */
+    /**
+     * 交给模型的内容：（群里）[昵称(QQ号)] + 文字；有引用时接 <Quoted Message>（照 AstrBot），
+     * 有聊天记录时接 <Forward Message>（本插件新增）；最后是图片。
+     */
     private buildContent;
     private ensureChat;
     private createChat;

@@ -23,11 +23,11 @@ window.__ModuleLoader__.load({
 		var zh = {
 			summary: "把 NapCat（OneBot v11）接到 dsh，照搬 AstrBot 的 aiocqhttp 适配器。",
 			connection: "连接",
-			connectionHint: "NapCat 在「网络配置」里新建 WebSocket 客户端，地址填 ws://<本机地址>:<端口>/ws，Token 与这里一致。改监听地址或端口后插件会自动重新监听，NapCat 会自动重连。",
+			connectionHint: "NapCat 在「网络配置」里新建 WebSocket 客户端，地址填 ws://<地址>:<端口>/ws，Token 与这里一致。改监听地址或端口后插件会自动重新监听，NapCat 会自动重连。",
 			host: "监听地址",
-			hostHint: "0.0.0.0 表示所有网卡都能连（AstrBot 默认）；NapCat 和 dsh 在同一台机器上时建议填 127.0.0.1。",
+			hostHint: "0.0.0.0 表示所有网卡都能连；NapCat 和 dsh 在同一台机器上时可以填 127.0.0.1，只允许本机连。",
 			port: "端口",
-			portHint: "1–65535，AstrBot 默认 6199。",
+			portHint: "1–65535。",
 			token: "Token",
 			tokenHint: "留空表示保持当前 Token。与 NapCat 里填的一致；没有 Token 时不校验，任何人都能连。",
 			tokenSet: "已设置 Token。",
@@ -55,6 +55,19 @@ window.__ModuleLoader__.load({
 			log: "日志",
 			logLevel: "日志级别",
 			logLevelHint: "debug 会记录每条收到的原始消息，排查问题时再开。",
+			friendNeedsPrefixHint: "打开后私聊也要以唤醒前缀开头才交给模型。",
+			ignoreSelfHint: "她在别的设备上用这个 QQ 号发的消息，NapCat 也会推过来；打开后这些消息不交给模型。",
+			test: "测试连接",
+			testing: "测试中…",
+			testUsesSaved: "测试用的是已保存的设置。",
+			testOk: "已连接：{who}，Token 校验通过。",
+			testOkNoToken: "已连接：{who}。没有设置 Token，任何人都能连。",
+			testConnectedApiFailed: "NapCat 已连上，但调用接口没有成功：{error}",
+			testRejectedMissing: "{minutes} 分钟内有 NapCat 来连接，但没带 Token。请在 NapCat 里填上和这里一致的 Token。",
+			testRejectedWrong: "{minutes} 分钟内有 NapCat 来连接，但 Token 不对。请检查 NapCat 里填的 Token。",
+			testNoClient: "插件正在监听 {address}，但还没有 NapCat 连上来。请在 NapCat 里新建 WebSocket 客户端并填对地址和 Token。",
+			testNotListening: "插件没有在监听 {address}，可能端口被占用，请换一个端口。",
+			testFailed: "测试失败：{error}",
 			overridden: "已修改",
 			reset: "恢复默认",
 			invalid: "格式不对",
@@ -73,7 +86,7 @@ window.__ModuleLoader__.load({
 			host: "Listen address",
 			hostHint: "0.0.0.0 accepts every interface (AstrBot's default); use 127.0.0.1 when NapCat runs on the same machine.",
 			port: "Port",
-			portHint: "1–65535; AstrBot uses 6199.",
+			portHint: "1–65535.",
 			token: "Token",
 			tokenHint: "Leave blank to keep the current token. Must match NapCat; without a token, connections are not checked.",
 			tokenSet: "A token is set.",
@@ -101,6 +114,19 @@ window.__ModuleLoader__.load({
 			log: "Logging",
 			logLevel: "Log level",
 			logLevelHint: "debug logs every raw message; turn it on only while troubleshooting.",
+			friendNeedsPrefixHint: "When on, private chats also need a wake prefix to reach the model.",
+			ignoreSelfHint: "NapCat also reports messages this QQ account sends from other devices; when on, they are not sent to the model.",
+			test: "Test connection",
+			testing: "Testing…",
+			testUsesSaved: "The test uses the saved settings.",
+			testOk: "Connected: {who}; token accepted.",
+			testOkNoToken: "Connected: {who}. No token is set, so anyone can connect.",
+			testConnectedApiFailed: "NapCat is connected but the API call failed: {error}",
+			testRejectedMissing: "Within {minutes} min a NapCat tried to connect without a token. Set the same token in NapCat.",
+			testRejectedWrong: "Within {minutes} min a NapCat tried to connect with a wrong token. Check the token in NapCat.",
+			testNoClient: "Listening on {address}, but no NapCat has connected. Add a WebSocket client in NapCat with this address and token.",
+			testNotListening: "Not listening on {address}; the port may be in use. Try another port.",
+			testFailed: "Test failed: {error}",
 			overridden: "Changed",
 			reset: "Reset",
 			invalid: "Invalid value",
@@ -115,14 +141,29 @@ window.__ModuleLoader__.load({
 
 		var CSS = [
 			".napcatb-section{display:grid;gap:12px;padding:4px 0 8px}",
-			".napcatb-section+.napcatb-section{border-top:.5px solid var(--dsw-alias-border-l3);padding-top:16px}",
+			".napcatb-section,.napcatb-details+.napcatb-section{border-top:.5px solid var(--dsw-alias-border-l3);padding-top:16px}",
 			".napcatb-title{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:600;margin:0}",
 			".napcatb-hint{color:var(--dsw-alias-label-tertiary);margin:0;font-size:12px;line-height:1.5}",
-			".napcatb-toggle{display:grid;gap:4px}",
-			".napcatb-toggleRow{color:var(--dsw-alias-label-primary);justify-content:space-between;align-items:flex-start;gap:16px;font-size:13px;line-height:1.5;display:flex}",
+			".napcatb-labelText{display:inline-flex;align-items:flex-start;gap:2px}",
+			".napcatb-tip{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;margin-top:-4px;border-radius:50%;border:.5px solid var(--dsw-alias-border-l4);color:var(--dsw-alias-label-tertiary);font-size:9px;font-weight:600;line-height:1;cursor:help;user-select:none}",
+			".napcatb-tip:hover,.napcatb-tip:focus-visible{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-tertiary);outline:none}",
+			".napcatb-toggleRow{color:var(--dsw-alias-label-primary);justify-content:space-between;align-items:center;gap:16px;font-size:13px;line-height:1.5;display:flex}",
 			".napcatb-field{display:grid;gap:6px}",
 			".napcatb-label{color:var(--dsw-alias-label-primary);font-size:13px}",
-			".napcatb-select{justify-self:start;min-width:160px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2,transparent);border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md,6px);padding:6px 8px;font:inherit;font-size:13px}"
+			".napcatb-select{justify-self:start;min-width:160px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2,transparent);border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md,6px);padding:6px 8px;font:inherit;font-size:13px}",
+			".napcatb-details{border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-lg,10px);padding:0 14px}",
+			".napcatb-summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 0;color:var(--dsw-alias-label-primary);font-size:14px;font-weight:600}",
+			".napcatb-summary::-webkit-details-marker{display:none}",
+			".napcatb-chevron{display:inline-block;color:var(--dsw-alias-label-tertiary);transition:transform .15s ease;font-size:16px;line-height:1}",
+			".napcatb-details[open] .napcatb-chevron{transform:rotate(90deg)}",
+			".napcatb-detailsBody{display:grid;gap:12px;padding:4px 0 16px}",
+			".napcatb-test{display:grid;gap:6px;margin-top:-4px}",
+			".napcatb-testRow{display:flex;align-items:center;gap:10px}",
+			".napcatb-result{margin:0;font-size:12px;line-height:1.5}",
+			".napcatb-ok{color:var(--dsw-alias-state-success-primary,#2f9e44)}",
+			".napcatb-warn{color:var(--dsw-alias-state-warning-primary,#d97706)}",
+			".napcatb-error{color:var(--dsw-alias-state-error-primary)}",
+			"@media (prefers-reduced-motion:reduce){.napcatb-chevron{transition:none}}"
 		].join("\n");
 		var CSS_ID = "dsh-napcat-bridge/settings.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(CSS_ID) + "]") === null) {
@@ -211,33 +252,38 @@ window.__ModuleLoader__.load({
 		//#endregion
 
 		//#region 页面
+		/** 名称 + 右上角的小角标；鼠标移上去（或键盘聚焦）显示说明。 */
+		function Label(props) {
+			if (!props.hint) return props.text;
+			return h("span", { className: "napcatb-labelText" },
+				props.text,
+				h(P.Tooltip, { label: props.hint, side: "top", delayMs: 150, maxWidth: 320 },
+					h("span", { className: "napcatb-tip", tabIndex: 0, role: "img", "aria-label": props.hint }, "?")));
+		}
+
 		function Section(props) {
 			return h("section", { className: "napcatb-section" },
-				h("h3", { className: "napcatb-title" }, props.title),
-				props.hint ? h("p", { className: "napcatb-hint" }, props.hint) : null,
+				h("h3", { className: "napcatb-title" }, h(Label, { text: props.title, hint: props.hint })),
 				props.children);
 		}
 
 		function Toggle(props) {
 			var field = props.state[props.field];
-			return h("div", { className: "napcatb-toggle" },
-				h("div", { className: "napcatb-toggleRow" },
-					h("span", null, props.label),
-					h(P.Switch, {
-						checked: field.text === "true",
-						label: props.label,
-						disabled: props.disabled,
-						onChange: function (checked) { props.edit(props.field, checked ? "true" : "false"); }
-					})),
-				props.hint ? h("p", { className: "napcatb-hint" }, props.hint) : null);
+			return h("div", { className: "napcatb-toggleRow" },
+				h(Label, { text: props.label, hint: props.hint }),
+				h(P.Switch, {
+					checked: field.text === "true",
+					label: props.label,
+					disabled: props.disabled,
+					onChange: function (checked) { props.edit(props.field, checked ? "true" : "false"); }
+				}));
 		}
 
 		function Value(props) {
 			var t = props.t;
 			return h(P.SettingsValueField, Object.assign({
 				id: "napcat-bridge-" + props.field,
-				label: props.label,
-				hint: props.hint,
+				label: h(Label, { text: props.label, hint: props.hint }),
 				overriddenLabel: t("overridden"),
 				resetLabel: t("reset"),
 				invalidLabel: props.invalidLabel || t("invalid"),
@@ -247,6 +293,50 @@ window.__ModuleLoader__.load({
 				onEdit: function (text) { props.edit(props.field, text); },
 				onReset: function () { props.resetField(props.field); }
 			}));
+		}
+
+		/** 把状态接口的结果写成一句话和语气（ok / warn / error）。 */
+		function describeStatus(t, st) {
+			if (!st.listening) return { tone: "error", text: t("testNotListening", { address: st.address }) };
+			var conns = st.connections || [];
+			if (conns.length > 0) {
+				if (st.login && st.login.user_id !== undefined && st.login.user_id !== null) {
+					var who = (st.login.nickname ? st.login.nickname + " " : "") + "(" + st.login.user_id + ")";
+					return { tone: "ok", text: t(st.tokenSet ? "testOk" : "testOkNoToken", { who: who }) };
+				}
+				return { tone: "warn", text: t("testConnectedApiFailed", { error: st.loginError || "?" }) };
+			}
+			if (st.lastRejected) {
+				var minutes = Math.max(1, Math.round((Date.now() - st.lastRejected.at) / 60000));
+				var key = String(st.lastRejected.status).indexOf("401") === 0 ? "testRejectedMissing" : "testRejectedWrong";
+				return { tone: "error", text: t(key, { minutes: minutes }) };
+			}
+			return { tone: "warn", text: t("testNoClient", { address: st.address }) };
+		}
+
+		function ConnectionTest(props) {
+			var t = props.t;
+			var stateHook = React.useState(null);
+			var result = stateHook[0], setResult = stateHook[1];
+			var busyHook = React.useState(false);
+			var busy = busyHook[0], setBusy = busyHook[1];
+			function run() {
+				setBusy(true);
+				var url = new URL("api/napcat-bridge/status", document.baseURI).href;
+				fetch(url, { credentials: "same-origin", cache: "no-store" })
+					.then(function (res) {
+						if (!res.ok) throw new Error("HTTP " + res.status);
+						return res.json();
+					})
+					.then(function (st) { setResult(describeStatus(t, st)); },
+						function (error) { setResult({ tone: "error", text: t("testFailed", { error: error && error.message || String(error) }) }); })
+					.finally(function () { setBusy(false); });
+			}
+			return h("div", { className: "napcatb-test" },
+				h("div", { className: "napcatb-testRow" },
+					h(P.Button, { size: "sm", disabled: busy, onClick: run }, busy ? t("testing") : t("test")),
+					props.dirty ? h("span", { className: "napcatb-hint" }, t("testUsesSaved")) : null),
+				result ? h("p", { className: "napcatb-result napcatb-" + result.tone, role: "status" }, result.text) : null);
 		}
 
 		function SettingsPage(props) {
@@ -262,24 +352,28 @@ window.__ModuleLoader__.load({
 				onSave: props.save,
 				onDiscard: props.discard
 			},
-				h(Section, { title: t("connection"), hint: t("connectionHint") },
-					h(Value, Object.assign({ field: "ws_reverse_host", label: t("host"), hint: t("hostHint") }, common)),
-					h(Value, Object.assign({ field: "ws_reverse_port", label: t("port"), hint: t("portHint"), numeric: true, invalidLabel: t("invalidPort") }, common)),
-					h(P.SettingsSecretField, {
-						id: "napcat-bridge-token",
-						label: t("token"),
-						hint: t("tokenHint"),
-						disabled: disabled,
-						text: token.text,
-						configured: state.tokenConfigured,
-						stateLabel: state.tokenConfigured ? t("tokenSet") : t("tokenUnset"),
-						onEdit: function (text) { props.edit("ws_reverse_token", text); }
-					}),
-					h(Value, Object.assign({ field: "id", label: t("platformId"), hint: t("platformIdHint") }, common))),
+				h("details", { className: "napcatb-details" },
+					h("summary", { className: "napcatb-summary" },
+						h("span", { className: "napcatb-chevron", "aria-hidden": true }, "›"),
+						h(Label, { text: t("connection"), hint: t("connectionHint") })),
+					h("div", { className: "napcatb-detailsBody" },
+						h(Value, Object.assign({ field: "ws_reverse_host", label: t("host"), hint: t("hostHint") }, common)),
+						h(Value, Object.assign({ field: "ws_reverse_port", label: t("port"), hint: t("portHint"), numeric: true, invalidLabel: t("invalidPort") }, common)),
+						h(P.SettingsSecretField, {
+							id: "napcat-bridge-token",
+							label: h(Label, { text: t("token"), hint: t("tokenHint") }),
+							disabled: disabled,
+							text: token.text,
+							configured: state.tokenConfigured,
+							stateLabel: state.tokenConfigured ? t("tokenSet") : t("tokenUnset"),
+							onEdit: function (text) { props.edit("ws_reverse_token", text); }
+						}),
+						h(ConnectionTest, { t: t, dirty: state.dirty }),
+						h(Value, Object.assign({ field: "id", label: t("platformId"), hint: t("platformIdHint") }, common)))),
 				h(Section, { title: t("wake"), hint: t("wakeHint") },
 					h(Value, Object.assign({ field: "wake_prefix", label: t("wakePrefix"), hint: t("wakePrefixHint") }, common)),
-					h(Toggle, Object.assign({ field: "friend_message_needs_wake_prefix", label: t("friendNeedsPrefix") }, common)),
-					h(Toggle, Object.assign({ field: "ignore_bot_self_message", label: t("ignoreSelf") }, common))),
+					h(Toggle, Object.assign({ field: "friend_message_needs_wake_prefix", label: t("friendNeedsPrefix"), hint: t("friendNeedsPrefixHint") }, common)),
+					h(Toggle, Object.assign({ field: "ignore_bot_self_message", label: t("ignoreSelf"), hint: t("ignoreSelfHint") }, common))),
 				h(Section, { title: t("model") },
 					h(Toggle, Object.assign({ field: "identifier", label: t("identifier"), hint: t("identifierHint") }, common)),
 					h(Toggle, Object.assign({ field: "imageToModel", label: t("imageToModel"), hint: t("imageToModelHint") }, common)),
@@ -288,16 +382,15 @@ window.__ModuleLoader__.load({
 					h(Value, Object.assign({ field: "workspacePath", label: t("workspacePath"), hint: t("workspacePathHint") }, common)),
 					h(Value, Object.assign({ field: "agentPreset", label: t("agentPreset"), hint: t("agentPresetHint") }, common))),
 				h(Section, { title: t("log") },
-					h("label", { className: "napcatb-field", htmlFor: "napcat-bridge-logLevel" },
-						h("span", { className: "napcatb-label" }, t("logLevel")),
+					h("div", { className: "napcatb-field" },
+						h("label", { className: "napcatb-label", htmlFor: "napcat-bridge-logLevel" }, h(Label, { text: t("logLevel"), hint: t("logLevelHint") })),
 						h("select", {
 							id: "napcat-bridge-logLevel",
 							className: "napcatb-select",
 							value: state.logLevel.text || "info",
 							disabled: disabled,
 							onChange: function (event) { props.edit("logLevel", event.target.value); }
-						}, LOG_LEVELS.map(function (level) { return h("option", { key: level, value: level }, level); })),
-						h("p", { className: "napcatb-hint" }, t("logLevelHint")))));
+						}, LOG_LEVELS.map(function (level) { return h("option", { key: level, value: level }, level); })))));
 		}
 		//#endregion
 

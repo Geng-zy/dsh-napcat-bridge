@@ -12,6 +12,7 @@
   - `astrbot/core/platform/astrbot_message.py`、`message_type.py` → `src/adapter.ts`
   - `astrbot/core/message/components.py` → `src/components.ts`
   - `astrbot/core/pipeline/waking_check/stage.py`（唤醒判断部分）→ `src/bridge.ts`
+  - `astrbot/core/utils/quoted_message/chain_parser.py`、`extractor.py`、`onebot_client.py` → `src/quoted.ts`
 
 由于移植了 AGPL 代码，本项目整体以 AGPL-3.0-or-later 发布，见 `LICENSE`。
 

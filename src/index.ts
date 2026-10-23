@@ -137,6 +137,43 @@ export function apply(ctx: Context, live: LiveConfig): void {
   }
   ctx.provide('napcat', service)
 
+  // 设置页「测试连接」：GET <dsh>/api/napcat-bridge/status。
+  // 挂在 dsh 的 /api 钩子上，请求先通过 dsh 网页的登录校验才会到这里；返回里不含 Token。
+  const status = async (): Promise<Record<string, unknown>> => {
+    const bot = adapter.bot
+    const connections = bot.connections()
+    let login: { user_id: unknown; nickname: unknown } | undefined
+    let loginError: string | undefined
+    if (connections.length > 0) {
+      try {
+        const info = await Promise.race([
+          bot.callAction('get_login_info', { self_id: connections[0].selfId }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('5 秒内没有回应')), 5000)),
+        ]) as Record<string, unknown> | null
+        login = { user_id: info?.user_id, nickname: info?.nickname }
+      } catch (error) {
+        loginError = error instanceof Error ? error.message : String(error)
+      }
+    }
+    const rejected = bot.lastRejected !== undefined && Date.now() - bot.lastRejected.at < 10 * 60_000 ? bot.lastRejected : undefined
+    return {
+      listening: bot.listening,
+      address: get('ws_reverse_host') + ':' + get('ws_reverse_port'),
+      tokenSet: get('ws_reverse_token') !== '',
+      connections,
+      login,
+      loginError,
+      lastRejected: rejected,
+    }
+  }
+  ctx.on('connection/request' as never, (async (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: () => Promise<void>) => {
+    const path = new URL(req.url ?? '/', 'http://localhost').pathname
+    if (!path.endsWith('/napcat-bridge/status')) return next()
+    const body = JSON.stringify(await status())
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(body)
+  }) as never)
+
   // 本插件自带设置页（client.js），告诉 dsh 不用按 schema 自动生成表单
   ctx.inject(['settings'], child => {
     child.effect(() => (child as any).settings.configure({ auto: false }, ctx.fiber), 'napcat-bridge: settings policy')
