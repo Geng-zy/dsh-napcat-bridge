@@ -1,6 +1,6 @@
 {
   "name": "dsh-napcat-bridge",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "把 NapCat（OneBot v11）接到 dsh（DeepSeek Harness）的插件，照搬 AstrBot 的 aiocqhttp 适配器实现。",
   "keywords": [
     "dsh",

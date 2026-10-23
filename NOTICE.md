@@ -17,12 +17,13 @@
 
 由于移植了 AGPL 代码，本项目整体以 AGPL-3.0-or-later 发布，见 `LICENSE`。
 
-## qface
+## QFace（小黄脸编号和名字）
 
-- 来源：npm 包 `qface` 1.4.1，<https://github.com/koishijs/QFace>
-- 许可证：MIT，作者 Shigma
-- 用到的部分：`lib/data.json` 里小黄脸编号和名字的对照 → `src/qface.ts`
-- 署名：Copyright (c) Shigma。许可文本与下面 aiocqhttp 一节的 MIT 许可全文相同（版权人换成 Shigma）。
+- 来源：<https://github.com/koishijs/QFace>
+  - 仓库 `public/assets/qq_emoji/_index.v2.json`（提交 `20ab855`，2026-09-28 从 QQ 同步）里数字编号表情的编号和名字，优先使用；
+  - 上面没有的旧编号，用 npm 包 `qface` 1.4.1 的 `lib/data.json` 补上。
+- 许可证：MIT，Copyright (c) 2020-present Shigma。许可文本与下面 aiocqhttp 一节的 MIT 许可全文相同（版权人换成 Shigma）。
+- 用到的部分：只有编号和名字 → `src/qface.ts`，不含图片和动画。表情名字本身属于 QQ（腾讯）。
 
 ## aiocqhttp
 

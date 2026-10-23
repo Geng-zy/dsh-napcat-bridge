@@ -267,3 +267,14 @@ test('直接发来的聊天记录也展开成 <Forward Message>', async () => {
   const f = await extractForwards([{ type: 'Forward', id: 'F9' }], callAction)
   assert.equal(f.text, '<Forward Message>\n甲: 你好\n</Forward Message>')
 })
+
+test('小黄脸名字表：新表情和旧表情都能认出来', async () => {
+  const a = adapterWith({})
+  const abm = await a.convertMessage(groupEvent([
+    { type: 'face', data: { id: '354' } },
+    { type: 'face', data: { id: '507' } },
+    { type: 'face', data: { id: '54' } },
+    { type: 'face', data: { id: '99999' } },
+  ]))
+  assert.equal(abm.message_str, '[表情:尊嘟假嘟][表情:被发现了][表情:闪电][表情:99999]')
+})
