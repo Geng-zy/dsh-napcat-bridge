@@ -1,0 +1,65 @@
+{
+  "name": "dsh-napcat-bridge",
+  "version": "0.1.0",
+  "description": "把 NapCat（OneBot v11）接到 dsh（DeepSeek Harness）的插件，照搬 AstrBot 的 aiocqhttp 适配器实现。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "onebot",
+    "onebot11",
+    "napcat",
+    "qq",
+    "astrbot"
+  ],
+  "license": "AGPL-3.0-or-later",
+  "author": "Geng-zy",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "files": [
+    "lib",
+    "dsh.plugin.json",
+    "cordis.patch.yml",
+    "LICENSE",
+    "NOTICE.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf lib && tsc -p tsconfig.json",
+    "test": "node --test test/adapter.test.mjs",
+    "e2e": "node test/e2e.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": ">=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-session": ">=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/schemastery": "^3.18.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "3.18.5",
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.12",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "dsh": ">=0.2.0-rc.1 <0.3.0-0",
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Geng-zy/dsh-napcat-bridge.git"
+  }
+}
