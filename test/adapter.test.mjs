@@ -86,7 +86,7 @@ test('NapCat 文件：get_group_file_url 换下载地址', async () => {
   assert.deepEqual(abm.message, [{ type: 'File', name: 'a.txt', file_: '', url: 'https://f/x' }])
 })
 
-test('图片只保留 AstrBot 声明的字段；mface 有地址当图片、名字进文字；markdown 当文字；未知类型忽略', async () => {
+test('图片只保留 AstrBot 声明的字段；mface 有地址当普通图片；markdown 当文字；未知类型忽略', async () => {
   const a = adapterWith({})
   const abm = await a.convertMessage(groupEvent([
     { type: 'image', data: { file: 'a.jpg', url: 'https://img', summary: '[图片]', sub_type: 0 } },
@@ -99,7 +99,7 @@ test('图片只保留 AstrBot 声明的字段；mface 有地址当图片、名�
     { type: 'Image', file: 'https://m/1.gif', _type: '', url: 'https://m/1.gif', path: '' },
     { type: 'Plain', text: '**粗**', convert: true },
   ])
-  assert.equal(abm.message_str, '[表情:开心]**粗**')
+  assert.equal(abm.message_str, '**粗**')
 })
 
 test('QQ 管家的消息返回 null', async () => {
@@ -169,14 +169,14 @@ test('群名：事件没带时查 get_group_info 并缓存', async () => {
   assert.equal(calls, 1)
 })
 
-test('小黄脸写成 [表情:名字]；NapCat 商城表情（image 段带 emoji_id）当图片并写名字', async () => {
+test('小黄脸写成 [表情:名字]；NapCat 商城表情（image 段带 emoji_id）当普通图片，不写名字', async () => {
   const a = adapterWith({})
   const abm = await a.convertMessage(groupEvent([
     { type: 'face', data: { id: '14' } },
     { type: 'image', data: { summary: '[狗头]', file: 'ab-cd.gif', url: 'https://gxh/raw300.gif', emoji_id: 'cd', emoji_package_id: 1 } },
     { type: 'image', data: { summary: '[图片]', file: 'p.jpg', url: 'https://img' } },
   ]))
-  assert.equal(abm.message_str, '[表情:微笑][表情:狗头]')
+  assert.equal(abm.message_str, '[表情:微笑]')
   assert.deepEqual(abm.message.map(c => c.type), ['Face', 'Image', 'Image'])
 })
 
