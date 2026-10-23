@@ -48,6 +48,12 @@ export interface BridgeDeps {
   callAction(action: string, params: Record<string, unknown>): Promise<any>
   /** 广播给其他插件 */
   emit(abm: AstrBotMessage, event: AiocqhttpMessageEvent, isWake: boolean): void
+  /** 当前设置（每次用到时读取，设置页改了立即生效） */
+  settings(): BridgeSettings
+  log: Logger
+}
+
+export interface BridgeSettings {
   cwd: string
   agentPreset: string
   wake: WakeConfig
@@ -55,9 +61,8 @@ export interface BridgeDeps {
   identifier: boolean
   /** 图片交给模型 */
   imageToModel: boolean
-  /** 一条消息最多交几张图片（含引用消息里的） */
+  /** 一条消息最多交几张图片（含引用消息里的）；0 = 不限 */
   maxImages: number
-  log: Logger
 }
 
 interface Chat {
@@ -134,7 +139,7 @@ export class Bridge {
 
   /** 适配器 handle_msg 的去处。 */
   async handle(abm: AstrBotMessage, event: AiocqhttpMessageEvent): Promise<void> {
-    const { isWake, messageStr, stop } = wakingCheck(event, this.deps.wake)
+    const { isWake, messageStr, stop } = wakingCheck(event, this.deps.settings().wake)
     try {
       this.deps.emit(abm, event, isWake && !stop)
     } catch (e) {
@@ -157,17 +162,18 @@ export class Bridge {
 
   /** 交给模型的内容：（群里）[昵称(QQ号)] + 文字，后面跟图片。 */
   private async buildContent(abm: AstrBotMessage, messageStr: string, own: Component[], quoted: Component[]): Promise<unknown[]> {
+    const settings = this.deps.settings()
     let text = messageStr
     if (text === '' && own.length > 0) text = '[图片]'
-    if (this.deps.identifier && abm.type === MessageType.GROUP_MESSAGE) {
+    if (settings.identifier && abm.type === MessageType.GROUP_MESSAGE) {
       text = '[' + (abm.sender.nickname || abm.sender.user_id) + '(' + abm.sender.user_id + ')] ' + text
     }
     const attachments = this.deps.attachments()
-    if (!this.deps.imageToModel || attachments === undefined || own.length + quoted.length === 0) {
+    if (!settings.imageToModel || attachments === undefined || own.length + quoted.length === 0) {
       return [{ type: 'text', text }]
     }
     const parts: unknown[] = [{ type: 'text', text }]
-    let budget = this.deps.maxImages
+    let budget = settings.maxImages > 0 ? settings.maxImages : Infinity
     let failed = 0
     const add = async (images: Component[], label?: string): Promise<void> => {
       const loaded: LoadedImage[] = []
@@ -211,7 +217,8 @@ export class Bridge {
     const sessionId = dshSessionId(umo)
     const selection = this.deps.defaultModel()?.currentSelection()
     const agentOptions = selection ? { provider: selection.provider, model: selection.model, ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) } : undefined
-    const presetId = this.deps.agentPreset || undefined
+    const settings = this.deps.settings()
+    const presetId = settings.agentPreset || undefined
     const presets = this.deps.presets()
     const setup: AgentSetup | undefined = presets !== undefined && presetId !== undefined
       ? (async (agentCtx: unknown) => { await presets.mount(agentCtx, presetId) }) as unknown as AgentSetup
@@ -225,7 +232,7 @@ export class Bridge {
     } else {
       handle = await this.deps.agents.create({
         sessionId: SessionId(sessionId),
-        meta: { cwd: this.deps.cwd, ...(presetId !== undefined ? { agentPreset: presetId } : {}) },
+        meta: { cwd: settings.cwd, ...(presetId !== undefined ? { agentPreset: presetId } : {}) },
         agentOptions: agentOptions as never,
         setup,
       })

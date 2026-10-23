@@ -48,6 +48,11 @@ export interface BridgeDeps {
     callAction(action: string, params: Record<string, unknown>): Promise<any>;
     /** 广播给其他插件 */
     emit(abm: AstrBotMessage, event: AiocqhttpMessageEvent, isWake: boolean): void;
+    /** 当前设置（每次用到时读取，设置页改了立即生效） */
+    settings(): BridgeSettings;
+    log: Logger;
+}
+export interface BridgeSettings {
     cwd: string;
     agentPreset: string;
     wake: WakeConfig;
@@ -55,9 +60,8 @@ export interface BridgeDeps {
     identifier: boolean;
     /** 图片交给模型 */
     imageToModel: boolean;
-    /** 一条消息最多交几张图片（含引用消息里的） */
+    /** 一条消息最多交几张图片（含引用消息里的）；0 = 不限 */
     maxImages: number;
-    log: Logger;
 }
 /** dsh 会话 id：napcat-<平台>-<类型>-<会话> 去掉不安全字符。 */
 export declare function dshSessionId(umo: string): string;

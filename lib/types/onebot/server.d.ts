@@ -3,8 +3,8 @@ import { type OneBotEvent } from './event.js';
 export type Handler = (event: OneBotEvent) => unknown | Promise<unknown>;
 export type Logger = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
 export interface CQHttpOptions {
-    /** AstrBot：ws_reverse_token */
-    accessToken?: string;
+    /** AstrBot：ws_reverse_token（函数形式：每次握手时读取，设置页改了立即生效） */
+    accessToken?: string | (() => string);
     /** AstrBot：api_timeout_sec=180 */
     apiTimeoutSec?: number;
     log: Logger;

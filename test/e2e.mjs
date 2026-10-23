@@ -94,7 +94,7 @@ writeFileSync(join(profile, 'cordis.patch.yml'), `- id: napcat-bridge
     logLevel: debug
 `)
 
-const dsh = spawn(process.env.DSH_BIN ?? 'dsh', ['web', '--host', '127.0.0.1', '--port', '0', '--no-open'], {
+const dsh = spawn(process.env.DSH_BIN ?? 'dsh', ['web', '--host', '127.0.0.1', '--port', process.env.E2E_WEB_PORT ?? '0', '--no-open'], {
   env: { ...process.env, DSH_HOME: home, DEEPSEEK_API_KEY: 'sk-e2e-fake', DEEPSEEK_BASE_URL: llmUrl, DSH_TELEMETRY_DISABLED: '1' },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
@@ -264,6 +264,11 @@ if (modelRequests.length !== before6) await fail('QQ 管家的消息被交给了
 log('QQ 管家屏蔽 OK')
 
 log('全部通过')
+if (process.env.E2E_HOLD) {
+  // 保留 dsh 和假 NapCat，方便在浏览器里看设置页；Ctrl-C 结束
+  log('保留运行中，dsh 网页：http://127.0.0.1:' + (process.env.E2E_WEB_PORT ?? '?') + '/')
+  await new Promise(() => {})
+}
 ws.close()
 await cleanup()
 process.exit(0)

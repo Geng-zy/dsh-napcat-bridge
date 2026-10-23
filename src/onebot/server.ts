@@ -49,8 +49,8 @@ interface Pending {
 }
 
 export interface CQHttpOptions {
-  /** AstrBot：ws_reverse_token */
-  accessToken?: string
+  /** AstrBot：ws_reverse_token（函数形式：每次握手时读取，设置页改了立即生效） */
+  accessToken?: string | (() => string)
   /** AstrBot：api_timeout_sec=180 */
   apiTimeoutSec?: number
   log: Logger
@@ -68,7 +68,7 @@ interface WsState {
  */
 export class CQHttp {
   private readonly bus = new EventBus()
-  private readonly accessToken: string
+  private readonly accessToken: () => string
   private readonly timeoutMs: number
   private readonly log: Logger
   /** _wsr_api_clients: self_id → ws */
@@ -82,7 +82,8 @@ export class CQHttp {
   private wss: WebSocketServer | undefined
 
   constructor(options: CQHttpOptions) {
-    this.accessToken = options.accessToken ?? ''
+    const token = options.accessToken ?? ''
+    this.accessToken = typeof token === 'function' ? token : () => token
     this.timeoutMs = (options.apiTimeoutSec ?? 180) * 1000
     this.log = options.log
   }
@@ -152,14 +153,15 @@ export class CQHttp {
 
   /** _handle_wsr 的鉴权部分：Authorization: Token|Bearer <token>，缺失 401，不符 403。 */
   private checkAuth(req: IncomingMessage): string | undefined {
-    if (this.accessToken === '') return undefined
+    const accessToken = this.accessToken()
+    if (accessToken === '') return undefined
     const auth = String(req.headers.authorization ?? '')
     const m = /^(?:[Tt]oken|[Bb]earer) (\S+)$/.exec(auth)
     if (m === null) {
       this.log('warn', 'authorization header is missed')
       return '401 Unauthorized'
     }
-    if (m[1].trim() !== this.accessToken) {
+    if (m[1].trim() !== accessToken) {
       this.log('warn', 'authorization header is invalid')
       return '403 Forbidden'
     }

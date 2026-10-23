@@ -46,11 +46,11 @@ export interface MessageSession {
 export declare function sessionToString(s: MessageSession): string;
 export declare function groupId(abm: AstrBotMessage): string;
 export interface AdapterOptions {
-    /** platform_config.id */
-    id: string;
+    /** platform_config.id（函数形式：每次读取当前设置） */
+    id: string | (() => string);
     ws_reverse_host: string;
     ws_reverse_port: number;
-    ws_reverse_token?: string;
+    ws_reverse_token?: string | (() => string);
     log: Logger;
     /** handle_msg → commit_event 的替代：转换好的消息交给这里。 */
     onMessage: (abm: AstrBotMessage, event: AiocqhttpMessageEvent) => void | Promise<void>;
@@ -58,7 +58,7 @@ export interface AdapterOptions {
 /** AiocqhttpAdapter */
 export declare class AiocqhttpAdapter {
     readonly bot: CQHttp;
-    readonly id: string;
+    private readonly getId;
     private host;
     private port;
     private readonly log;
@@ -95,6 +95,9 @@ export declare class AiocqhttpAdapter {
     private groupName;
     /** 改动：某个 QQ 号的显示名：群里用名片/昵称，私聊用陌生人昵称；查不到返回空。 */
     private displayName;
+    get id(): string;
+    /** 改动：设置页改了监听地址/端口时，用新的地址重启（不影响已建立的 dsh 会话）。 */
+    restart(host: string, port: number): Promise<void>;
     /** run */
     run(): Promise<void>;
     /** terminate */

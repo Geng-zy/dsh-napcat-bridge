@@ -42,7 +42,7 @@
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.2.0
+dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.3.0
 ```
 
 然后在 profile 的 `cordis.patch.yml` 里写配置（行 id 固定是 `napcat-bridge`）：
@@ -61,6 +61,15 @@ NapCat 那边在「网络配置」里新建一个 **WebSocket 客户端**：
 - Token 和上面的 `ws_reverse_token` 一致
 - 消息格式选 `array`
 
+## 设置页
+
+装好后在 dsh 侧栏 **插件** → **dsh-napcat-bridge** 打开设置页，下面所有配置项都能在网页里改，点保存后立即生效，不用重启 dsh：
+- 改了监听地址或端口，插件会自动换新地址重新监听，NapCat 会自动重连；
+- Token 不会显示出来，只提示有没有设置；留空保存表示不改；
+- 页面用 dsh 自带的表单组件和颜色，深色/浅色主题自动跟随 dsh。
+
+也可以直接改 profile 的 `cordis.patch.yml`，两边是同一份配置。
+
 ## 配置项
 
 | 配置 | 默认值 | 说明 |
@@ -76,7 +85,7 @@ NapCat 那边在「网络配置」里新建一个 **WebSocket 客户端**：
 | `agentPreset` | 空 | QQ 会话使用的 agent 预设 |
 | `identifier` | `true` | 群消息交给模型时前面加 `[昵称(QQ号)]` |
 | `imageToModel` | `true` | 图片作为附件交给模型 |
-| `maxImages` | `6` | 一条消息最多交给模型几张图片 |
+| `maxImages` | `0` | 一条消息最多交给模型几张图片，0 = 不限 |
 | `logLevel` | `info` | 日志级别 |
 
 ## 给其他插件用

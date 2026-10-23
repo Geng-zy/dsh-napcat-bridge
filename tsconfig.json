@@ -3,7 +3,9 @@
     "target": "ES2024",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "lib": ["ES2024"],
+    "lib": [
+      "ES2024"
+    ],
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -11,7 +13,14 @@
     "outDir": "lib",
     "declaration": true,
     "declarationDir": "lib/types",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "src/client"
+  ]
 }

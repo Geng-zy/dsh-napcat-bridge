@@ -76,11 +76,11 @@ export function groupId(abm: AstrBotMessage): string {
 }
 
 export interface AdapterOptions {
-  /** platform_config.id */
-  id: string
+  /** platform_config.id（函数形式：每次读取当前设置） */
+  id: string | (() => string)
   ws_reverse_host: string
   ws_reverse_port: number
-  ws_reverse_token?: string
+  ws_reverse_token?: string | (() => string)
   log: Logger
   /** handle_msg → commit_event 的替代：转换好的消息交给这里。 */
   onMessage: (abm: AstrBotMessage, event: AiocqhttpMessageEvent) => void | Promise<void>
@@ -96,7 +96,7 @@ const errText = (e: unknown): string => (e instanceof Error ? e.message : String
 /** AiocqhttpAdapter */
 export class AiocqhttpAdapter {
   readonly bot: CQHttp
-  readonly id: string
+  private readonly getId: () => string
   private host: string
   private port: number
   private readonly log: Logger
@@ -113,7 +113,8 @@ export class AiocqhttpAdapter {
   private readonly recent = new TtlCache<string>(30 * MINUTE, 5000)
 
   constructor(options: AdapterOptions) {
-    this.id = options.id
+    const id = options.id
+    this.getId = typeof id === 'function' ? id : () => id
     this.host = options.ws_reverse_host
     this.port = options.ws_reverse_port
     this.log = options.log
@@ -503,6 +504,18 @@ export class AiocqhttpAdapter {
     } catch {
       return ''
     }
+  }
+
+  get id(): string {
+    return this.getId()
+  }
+
+  /** 改动：设置页改了监听地址/端口时，用新的地址重启（不影响已建立的 dsh 会话）。 */
+  async restart(host: string, port: number): Promise<void> {
+    await this.bot.close()
+    this.host = host
+    this.port = port
+    await this.run()
   }
 
   /** run */

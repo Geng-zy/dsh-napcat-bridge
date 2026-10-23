@@ -21,7 +21,13 @@ export interface Config {
     maxImages: number;
     logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
-export declare const Config: z<Config>;
+/** 插件收到的配置：每项都是可实时读取的引用（.get()），设置页保存后立即更新。 */
+export type LiveConfig = {
+    [K in keyof Config]: {
+        get(): Config[K];
+    };
+};
+export declare const Config: z<LiveConfig>;
 export declare const name = "dsh-napcat-bridge";
 export declare const inject: string[];
 /** 给其他插件（如记忆插件）用的服务：ctx.napcat */
@@ -64,5 +70,5 @@ type Context = CordisContext & {
         stat(id: string): Promise<object | undefined>;
     };
 };
-export declare function apply(ctx: Context, config: Config): void;
+export declare function apply(ctx: Context, live: LiveConfig): void;
 export { MessageType };
