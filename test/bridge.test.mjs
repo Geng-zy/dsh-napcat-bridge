@@ -1,4 +1,5 @@
-// 单元测试：桥接（白名单、管理员、指令、只 @ 等待、频率限制、提示、按类型选预设、语音转文字）。
+// 单元测试：桥接（白名单、管理员、指令、只 @ 等待、频率限制、提示、按类型选预设、语音转文字、
+// 给其他插件的接口：napcat/prompt、会话信息、换会话、napcat/sent，视频截图）。
 // 用法：node --test test/（先 pnpm run build）
 import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs'
@@ -8,6 +9,7 @@ import { test } from 'node:test'
 
 import { AiocqhttpAdapter } from '../lib/adapter.js'
 import { Bridge, formatNow } from '../lib/bridge.js'
+import { Media } from '../lib/media.js'
 import { SessionStore } from '../lib/store.js'
 
 const BOT = 10001
@@ -28,15 +30,18 @@ function settings(over = {}) {
     presets: { default: '', private: '', group: '', adminPrivate: '' },
     models: { private: '', group: '', adminPrivate: '' },
     stt: { mode: 'off', command: '', apiUrl: '', apiKey: '', model: '' },
+    video: { enabled: true, maxFrames: 4, secondsPerFrame: 5, maxEdge: 1024, maxMB: 100, maxMinutes: 10, timeoutSeconds: 30, ffmpegPath: '/nonexistent/ffmpeg' },
     ...over,
   }
 }
 
 /** 搭一个桥：假的 agent 注册表记下每次 followup，假的 NapCat 记下发出的消息。 */
-function harness(over = {}, api = {}) {
+function harness(over = {}, api = {}, hooks = {}) {
   const followups = []
   const created = []
   const sent = []
+  const events = { prompt: [], sent: [], changed: [] }
+  let sessionListener = () => {}
   let s = settings(over)
   const agents = {
     create: async opts => {
@@ -45,7 +50,7 @@ function harness(over = {}, api = {}) {
       return {
         agent: {
           session: { id: sessionId },
-          followup: m => followups.push({ sessionId, text: m.content.map(c => c.text ?? '').join('\n') }),
+          followup: m => followups.push({ sessionId, text: m.content.map(c => c.text ?? '').filter(t => t !== '').join('\n'), images: m.content.filter(c => c.type === 'image').length }),
           cancel: () => followups.push({ sessionId, cancelled: true }),
         },
         dispose: async () => {},
@@ -65,15 +70,24 @@ function harness(over = {}, api = {}) {
   }
   adapter.bot.sendPrivateMsg = p => adapter.bot.callAction('send_private_msg', p)
   adapter.bot.sendGroupMsg = p => adapter.bot.callAction('send_group_msg', p)
+  const media = new Media({
+    callAction: (a, p) => adapter.bot.callAction(a, p),
+    attachments: () => hooks.attachments,
+    settings: () => ({ imageToModel: s.imageToModel, maxImages: s.maxImages, stt: s.stt, video: s.video }),
+    log: () => {},
+  })
   bridge = new Bridge({
     agents,
     defaultModel: () => ({ currentSelection: () => ({ provider: 'deepseek', model: 'default-model' }) }),
     presets: () => ({ mount: async () => ({}) }),
     persistence: () => undefined,
-    attachments: () => undefined,
+    media,
     callAction: (a, p) => adapter.bot.callAction(a, p),
-    onSessionEvent: () => () => {},
+    onSessionEvent: listener => { sessionListener = listener; return () => {} },
     emit: () => {},
+    prompt: async payload => { events.prompt.push(payload); if (hooks.prompt) await hooks.prompt(payload) },
+    sent: payload => events.sent.push(payload),
+    sessionChanged: change => events.changed.push(change),
     settings: () => s,
     store: new SessionStore(join(mkdtempSync(join(tmpdir(), 'napcat-store-')), 'sessions.json')),
     log: () => {},
@@ -85,7 +99,13 @@ function harness(over = {}, api = {}) {
   }
   const privateMsg = (user, message) => send({ post_type: 'message', message_type: 'private', user_id: user, sender: { user_id: user, nickname: 'n' + user }, message })
   const groupMsg = (user, group, message, role = 'member') => send({ post_type: 'message', message_type: 'group', group_id: group, group_name: '测试群', user_id: user, sender: { user_id: user, nickname: 'n' + user, card: '', role }, message })
-  return { followups, created, sent, privateMsg, groupMsg, set: next => { s = settings({ ...over, ...next }) } }
+  const turn = (sessionId, reply) => {
+    const session = { id: sessionId }
+    sessionListener(session, { type: 'turn/start' })
+    sessionListener(session, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: reply }] } } })
+    sessionListener(session, { type: 'turn/end' })
+  }
+  return { followups, created, sent, events, bridge, turn, privateMsg, groupMsg, set: next => { s = settings({ ...over, ...next }) } }
 }
 const text = t => ({ type: 'text', data: { text: t } })
 const at = qq => ({ type: 'at', data: { qq: String(qq) } })
@@ -193,4 +213,111 @@ test('语音：关闭时写 [语音]；本机命令方式转成文字', async ()
   h.set({ stt: { mode: 'command', command: script + ' {file}', apiUrl: '', apiKey: '', model: '' } })
   await h.privateMsg(8, [{ type: 'record', data: { file: 'b.amr' } }])
   assert.equal(h.followups[1].text, '[语音] 今天吃什么')
+})
+
+test('napcat/prompt：其他插件能往内容里加东西，能拿到会话信息，第一轮标成新会话', async () => {
+  const h = harness({}, memberInfo, {
+    prompt: payload => { payload.content.unshift({ type: 'text', text: '<记忆>主人爱吃红烧肉</记忆>' }) },
+  })
+  await h.privateMsg(Number(ADMIN), [text('今天吃什么')])
+  await h.privateMsg(Number(ADMIN), [text('再说一句')])
+  assert.equal(h.followups[0].text, '<记忆>主人爱吃红烧肉</记忆>\n今天吃什么')
+  const [first, second] = h.events.prompt
+  assert.equal(first.newSession, true)
+  assert.equal(second.newSession, false)
+  assert.equal(first.message.message_str, '今天吃什么')
+  assert.deepEqual(
+    { type: first.info.type, userId: first.info.userId, adminPrivate: first.info.adminPrivate, umo: first.info.umo, selfId: first.info.selfId },
+    { type: 'private', userId: ADMIN, adminPrivate: true, umo: 'napcat:FriendMessage:' + ADMIN, selfId: String(BOT) },
+  )
+})
+
+test('napcat/prompt 监听器出错时照常交给模型', async () => {
+  const h = harness({}, memberInfo, { prompt: () => { throw new Error('坏了') } })
+  await h.privateMsg(8, [text('你好')])
+  assert.equal(h.followups[0].text, '你好')
+})
+
+test('会话信息：建会话前登记，群聊有群号，群里每人单独会话时有 QQ 号', async () => {
+  const h = harness({}, memberInfo)
+  await h.groupMsg(9, 555, [at(BOT), text('a')])
+  const id = String(h.created[0].sessionId)
+  const info = h.bridge.sessionInfo(id)
+  assert.equal(info.type, 'group')
+  assert.equal(info.groupId, '555')
+  assert.equal(info.userId, undefined)
+  assert.equal(info.adminPrivate, false)
+  assert.equal(h.bridge.sessionInfoByUmo('napcat:GroupMessage:555').sessionId, id)
+  assert.equal(h.bridge.sessionInfo('不存在'), undefined)
+  h.set({ uniqueSession: true })
+  await h.groupMsg(10, 555, [at(BOT), text('b')])
+  const unique = h.bridge.sessionInfo(String(h.created[1].sessionId))
+  assert.equal(unique.userId, '10')
+  assert.equal(unique.groupId, '555')
+})
+
+test('rotateSession：换新的 dsh 会话，发 napcat/session-changed，下一条进新会话并标成新会话', async () => {
+  const h = harness({}, memberInfo)
+  await h.privateMsg(8, [text('第一句')])
+  const oldId = String(h.created[0].sessionId)
+  const r = await h.bridge.rotateSession('napcat:FriendMessage:8')
+  assert.equal(r.oldSessionId, oldId)
+  assert.notEqual(r.newSessionId, oldId)
+  assert.deepEqual(h.events.changed, [{ umo: 'napcat:FriendMessage:8', oldSessionId: oldId, newSessionId: r.newSessionId, reason: 'rotate' }])
+  await h.privateMsg(8, [text('第二句')])
+  assert.equal(String(h.created[1].sessionId), r.newSessionId)
+  assert.equal(h.events.prompt[1].newSession, true)
+  await h.privateMsg(8, [text('/new')])
+  assert.equal(h.events.changed[1].reason, 'command')
+})
+
+test('napcat/sent：她一轮说完、回复发出去以后通知其他插件', async () => {
+  const h = harness({}, memberInfo)
+  await h.privateMsg(8, [text('你好')])
+  h.turn(String(h.created[0].sessionId), '你好呀')
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(h.sent.at(-1).text, '你好呀')
+  assert.equal(h.events.sent.length, 1)
+  assert.equal(h.events.sent[0].text, '你好呀')
+  assert.equal(h.events.sent[0].umo, 'napcat:FriendMessage:8')
+  assert.equal(h.events.sent[0].source, 'reply')
+})
+
+/** 假 ffmpeg：-version 报版本；只给 -i 时在 stderr 写时长并以 1 退出（和真的一样）；截图时输出一个 JPEG 头。 */
+function fakeFfmpeg(seconds) {
+  const dir = mkdtempSync(join(tmpdir(), 'ffmpeg-'))
+  const bin = join(dir, 'ffmpeg')
+  writeFileSync(bin, [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *-version*) echo "ffmpeg version fake"; exit 0;;',
+    '  *-frames:v*) printf "\\377\\330\\377\\340fakejpeg"; exit 0;;',
+    '  *) echo "  Duration: 00:00:' + String(seconds).padStart(2, '0') + '.00, start: 0" 1>&2; exit 1;;',
+    'esac',
+  ].join('\n') + '\n')
+  chmodSync(bin, 0o755)
+  const video = join(dir, 'v.mp4')
+  writeFileSync(video, 'not really a video')
+  return { bin, video }
+}
+
+test('视频：没有 ffmpeg 时只写 [视频]；有 ffmpeg 时附截图和一句说明', async () => {
+  const { bin, video } = fakeFfmpeg(10)
+  const attachments = { admitPromptContent: async parts => parts }
+  const h = harness({ imageToModel: true }, memberInfo, { attachments })
+  await h.privateMsg(8, [{ type: 'video', data: { file: video } }])
+  assert.equal(h.followups[0].text, '[视频]')
+  assert.equal(h.followups[0].images, 0)
+  h.set({ imageToModel: true, video: { enabled: true, maxFrames: 4, secondsPerFrame: 5, maxEdge: 1024, maxMB: 100, maxMinutes: 10, timeoutSeconds: 30, ffmpegPath: bin } })
+  await h.privateMsg(8, [text('看这个'), { type: 'video', data: { file: video } }])
+  assert.equal(h.followups[1].text, '看这个 [视频]\n[视频，时长 0:10，以下是从中截取的 2 张画面]')
+  assert.equal(h.followups[1].images, 2)
+})
+
+test('视频：关掉「图片交给模型」时不截图', async () => {
+  const { bin, video } = fakeFfmpeg(10)
+  const h = harness({ imageToModel: false, video: { enabled: true, maxFrames: 4, secondsPerFrame: 5, maxEdge: 1024, maxMB: 100, maxMinutes: 10, timeoutSeconds: 30, ffmpegPath: bin } }, memberInfo, { attachments: { admitPromptContent: async p => p } })
+  await h.privateMsg(8, [{ type: 'video', data: { file: video } }])
+  assert.equal(h.followups[0].text, '[视频]')
+  assert.equal(h.followups[0].images, 0)
 })

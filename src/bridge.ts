@@ -4,7 +4,8 @@
 //   → 只 @ 不说话时等下一条（handle_empty_mention）→ 频率限制（RateLimitStage）
 //   → 语音转文字（PreProcessStage）→ 交给 unified_msg_origin 对应的 dsh 会话。
 // 每条转换好的消息都通过 ctx 事件 'napcat/message' 广播（给记忆等其他插件用）。
-// 会话一轮结束时，把模型最后一条回复的文字原样发回。
+// 交给模型前先发 'napcat/prompt'，其他插件可以往内容里加东西（本插件新增）。
+// 会话一轮结束时，把模型最后一条回复的文字原样发回，并发 'napcat/sent'（本插件新增）。
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -14,10 +15,11 @@ import {
   AiocqhttpMessageEvent, MessageType, sessionToString,
   type AstrBotMessage, type MessageSession,
 } from './adapter.js'
-import { Plain, type Component } from './components.js'
-import { loadImage, type LoadedImage } from './images.js'
+import { Plain, type Component, type MessageChain } from './components.js'
+import type { VideoSettings } from './ffmpeg.js'
+import type { Media, ModelPart } from './media.js'
 import { extractForwards, extractQuoted } from './quoted.js'
-import { transcribe, type SttSettings } from './stt.js'
+import type { SttSettings } from './stt.js'
 import type { SessionStore } from './store.js'
 import type { Logger } from './onebot/server.js'
 
@@ -47,12 +49,18 @@ export interface BridgeDeps {
   persistence(): { stat(id: string): Promise<object | undefined> } | undefined
   /** 会话事件来源（ctx.on('session/event')） */
   onSessionEvent(listener: (session: Session, event: SessionEvent) => void): () => void
-  /** dsh 附件服务（可选；没有时图片不交给模型） */
-  attachments(): { admitPromptContent(content: readonly unknown[]): Promise<unknown[]> } | undefined
+  /** 图片、语音、视频 → 模型内容 */
+  media: Media
   /** 调 OneBot API（读图片时 get_image 兜底） */
   callAction(action: string, params: Record<string, unknown>): Promise<any>
   /** 广播给其他插件 */
   emit(abm: AstrBotMessage, event: AiocqhttpMessageEvent, isWake: boolean): void
+  /** 交给模型前让其他插件加内容（ctx.serial('napcat/prompt')） */
+  prompt(payload: PromptPayload): Promise<unknown>
+  /** 她发出了一条消息（ctx.emit('napcat/sent')） */
+  sent(payload: SentPayload): void
+  /** QQ 会话换了 dsh 会话（ctx.emit('napcat/session-changed')） */
+  sessionChanged(change: SessionChange): void
   /** 当前设置（每次用到时读取，设置页改了立即生效） */
   settings(): BridgeSettings
   /** 记住每个 QQ 会话当前的 dsh 会话 id */
@@ -88,7 +96,67 @@ export interface BridgeSettings {
   /** 新会话用的模型，写成 提供方/模型（空 = 用 dsh 默认模型） */
   models: { private: string; group: string; adminPrivate: string }
   stt: SttSettings
+  video: VideoSettings
 }
+
+/** 一个 dsh 会话对应哪个 QQ 会话（本插件新增，给其他插件按会话分规则用）。 */
+export interface SessionInfo {
+  /** unified_msg_origin */
+  umo: string
+  /** dsh 会话 id */
+  sessionId: string
+  /** 平台 ID（设置里的 id） */
+  platformId: string
+  /** 她自己的 QQ 号 */
+  selfId: string
+  type: 'private' | 'group'
+  /** 私聊：对方 QQ 号；群里每人单独一个会话时：这个人的 QQ 号 */
+  userId?: string
+  /** 群号 */
+  groupId?: string
+  /** 管理员（主人）的私聊 */
+  adminPrivate: boolean
+}
+
+/** 'napcat/prompt' 的参数：监听者直接改 content（在前后插入文字或图片）。 */
+export interface PromptPayload {
+  info: SessionInfo
+  /** 这是这个 dsh 会话的第一轮（刚新建的会话） */
+  newSession: boolean
+  /** 唤醒她的那条消息 */
+  message: AstrBotMessage
+  /**
+   * 要交给模型的内容，还没经过 dsh 附件服务。
+   * 元素是 { type: 'text', text } 或 { type: 'image', mediaType, data(base64) }，插件一之后统一交给附件服务。
+   */
+  content: ModelPart[]
+}
+
+/** 'napcat/sent' 的参数。 */
+export interface SentPayload {
+  /** unified_msg_origin */
+  umo: string
+  session: MessageSession
+  /** 发出去的文字（只取文字部分） */
+  text: string
+  chain: MessageChain
+  /** reply：她一轮说完的回复；service：其他插件通过 ctx.napcat.sendBySession 发的 */
+  source: 'reply' | 'service'
+  /** 发出的时间（毫秒） */
+  time: number
+}
+
+/** 'napcat/session-changed' 的参数。 */
+export interface SessionChange {
+  umo: string
+  oldSessionId: string
+  newSessionId: string
+  /** command：QQ 里发了 /new 或 /reset；rotate：其他插件调用了 ctx.napcat.rotateSession */
+  reason: 'command' | 'rotate'
+}
+
+/** 'napcat/prompt' 监听者最多等多久，超时就按当时的内容发出去。 */
+const PROMPT_HOOK_MS = 30_000
 
 /** AstrBot handle_empty_mention 让模型主动问一句时用的提示词（原文）。 */
 const EMPTY_MENTION_PROMPT = '注意，你正在社交媒体上中与用户进行聊天，用户只是通过@来唤醒你，但并未在这条消息中输入内容，他可能会在接下来一条发送他想发送的内容。'
@@ -134,6 +202,9 @@ interface Chat {
   lastText: string
   /** 最近一次唤醒它的事件，回复发给它 */
   replyTo: AiocqhttpMessageEvent
+  info: SessionInfo
+  /** 新建的会话，还没交过内容给模型 */
+  fresh: boolean
 }
 
 /** dsh 会话 id：napcat-<平台>-<类型>-<会话> 去掉不安全字符。 */
@@ -194,6 +265,8 @@ export class Bridge {
   private readonly chats = new Map<string, Chat>()
   private readonly bySession = new Map<string, string>()
   private readonly creating = new Map<string, Promise<Chat>>()
+  /** dsh 会话 id → QQ 会话信息（建会话之前就登记，预设里的插件启动时就能查到） */
+  private readonly infos = new Map<string, SessionInfo>()
   /** 只 @ 不说话的人：key = 会话|QQ 号，值 = 等到什么时候 */
   private readonly waiters = new Map<string, number>()
   /** 频率限制：每个会话最近处理的时间 */
@@ -288,33 +361,26 @@ export class Bridge {
 
     if (s.emptyMention.waiting && this.isEmptyMention(abm, event, s)) {
       this.waiters.set(waiterKey, Date.now() + EMPTY_MENTION_WAIT_MS)
-      if (s.emptyMention.needReply) await this.dispatch(event, umo, [{ type: 'text', text: EMPTY_MENTION_PROMPT }])
+      if (s.emptyMention.needReply) await this.dispatch(event, umo, abm, [{ type: 'text', text: EMPTY_MENTION_PROMPT }])
       return
     }
 
     if (!await this.rateLimit(umo, s)) return
 
     // 语音转文字（PreProcessStage）
-    const records = abm.message.filter(c => c.type === 'Record')
-    for (const record of records) {
-      let piece = '[语音]'
-      if (s.stt.mode !== 'off') {
-        try {
-          const text = await transcribe(record, s.stt, this.deps.callAction)
-          piece = text !== '' ? '[语音] ' + text : '[语音，没听清]'
-        } catch (e) {
-          this.deps.log('warn', '语音转文字失败: ' + errText(e))
-          piece = '[语音，转文字失败]'
-        }
-      }
+    for (const record of abm.message.filter(c => c.type === 'Record')) {
+      const piece = await this.deps.media.voiceText(record)
       messageStr = messageStr === '' ? piece : messageStr + ' ' + piece
     }
 
     const own = abm.message.filter(c => c.type === 'Image')
+    const videos = abm.message.filter(c => c.type === 'Video')
     const hasForward = abm.message.some(c => c.type === 'Forward')
+    // 本插件新增：视频（AstrBot 不处理）在文字里写 [视频]，有 ffmpeg 时另外附几张截图
+    for (let i = 0; i < videos.length; i++) messageStr = messageStr === '' ? '[视频]' : messageStr + ' [视频]'
     if (messageStr === '' && own.length === 0 && !hasForward) return
-    const content = await this.buildContent(abm, messageStr, own, admin, s)
-    await this.dispatch(event, umo, content)
+    const content = await this.buildContent(abm, messageStr, own, videos, admin, s)
+    await this.dispatch(event, umo, abm, content)
   }
 
   private isEmptyMention(abm: AstrBotMessage, event: AiocqhttpMessageEvent, s: BridgeSettings): boolean {
@@ -325,11 +391,30 @@ export class Bridge {
     return m.type === 'Plain' && s.wake.wakePrefix.includes(String(m.text).trim())
   }
 
-  private async dispatch(event: AiocqhttpMessageEvent, umo: string, content: unknown[]): Promise<void> {
+  private async dispatch(event: AiocqhttpMessageEvent, umo: string, abm: AstrBotMessage, content: ModelPart[]): Promise<void> {
     const chat = await this.ensureChat(event, umo)
     chat.replyTo = event
+    // 本插件新增：交给模型前让其他插件（记忆等）往内容里加东西
+    const payload: PromptPayload = { info: chat.info, newSession: chat.fresh, message: abm, content: [...content] }
+    chat.fresh = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        this.deps.prompt(payload),
+        new Promise(resolve => { timer = setTimeout(() => {
+          this.deps.log('warn', 'napcat/prompt 监听器 ' + PROMPT_HOOK_MS / 1000 + ' 秒没有完成，先按现有内容发给模型')
+          resolve(undefined)
+        }, PROMPT_HOOK_MS) }),
+      ])
+    } catch (e) {
+      this.deps.log('warn', 'napcat/prompt 监听器出错: ' + errText(e))
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+    const parts = Array.isArray(payload.content) ? [...payload.content] : content
+    const admitted = await this.deps.media.admit(parts)
     chat.handle.agent.followup(createUserMessage({
-      content: content as never,
+      content: admitted as never,
       source: { kind: 'plugin:napcat-bridge' },
     }))
   }
@@ -363,22 +448,52 @@ export class Bridge {
         await reply('已停止。')
       }
     } else {
-      await this.startNewSession(umo)
+      await this.startNewSession(umo, 'command')
       await reply('已开始新的对话。')
     }
     return true
   }
 
-  /** /new、/reset：换一个新的 dsh 会话，旧的留在 dsh 里。 */
-  private async startNewSession(umo: string): Promise<void> {
-    const next = dshSessionId(umo) + '-' + Date.now().toString(36)
-    this.deps.store.set(umo, next)
+  /** /new、/reset、rotateSession：换一个新的 dsh 会话，旧的留在 dsh 里。返回新旧会话 id。 */
+  private async startNewSession(umo: string, reason: SessionChange['reason']): Promise<{ oldSessionId: string; newSessionId: string }> {
+    const pending = this.creating.get(umo)
+    if (pending !== undefined) await pending.catch(() => undefined)
     const chat = this.chats.get(umo)
-    if (chat === undefined) return
-    this.chats.delete(umo)
-    this.bySession.delete(String((chat.handle.agent as Agent).session.id))
-    await chat.handle.dispose().catch(e => this.deps.log('warn', '关闭旧会话失败: ' + errText(e)))
+    const oldSessionId = chat !== undefined ? String((chat.handle.agent as Agent).session.id) : (this.deps.store.get(umo) ?? dshSessionId(umo))
+    let next = dshSessionId(umo) + '-' + Date.now().toString(36)
+    if (next === oldSessionId) next += '-1'
+    this.deps.store.set(umo, next)
+    if (chat !== undefined) {
+      this.chats.delete(umo)
+      this.bySession.delete(oldSessionId)
+      await chat.handle.dispose().catch(e => this.deps.log('warn', '关闭旧会话失败: ' + errText(e)))
+    }
     this.deps.log('info', umo + ' 换到新会话 ' + next)
+    const change: SessionChange = { umo, oldSessionId, newSessionId: next, reason }
+    try {
+      this.deps.sessionChanged(change)
+    } catch (e) {
+      this.deps.log('warn', 'napcat/session-changed 监听器出错: ' + errText(e))
+    }
+    return { oldSessionId, newSessionId: next }
+  }
+
+  /** 给其他插件用：让某个 QQ 会话换一个新的 dsh 会话（下一条消息进新会话）。 */
+  rotateSession(umo: string): Promise<{ oldSessionId: string; newSessionId: string }> {
+    return this.startNewSession(umo, 'rotate')
+  }
+
+  /** dsh 会话 id → QQ 会话信息。 */
+  sessionInfo(sessionId: string): SessionInfo | undefined {
+    return this.infos.get(sessionId)
+  }
+
+  /** QQ 会话（unified_msg_origin）→ 当前的会话信息。 */
+  sessionInfoByUmo(umo: string): SessionInfo | undefined {
+    const chat = this.chats.get(umo)
+    if (chat !== undefined) return chat.info
+    const id = this.deps.store.get(umo) ?? dshSessionId(umo)
+    return this.infos.get(id)
   }
 
   /** AstrBot _append_system_reminders；markAdmin 为本插件新增。 */
@@ -392,9 +507,10 @@ export class Bridge {
 
   /**
    * 交给模型的内容：（群里）[昵称(QQ号)] + 文字；有引用时接 <Quoted Message>（照 AstrBot），
-   * 有聊天记录时接 <Forward Message>（本插件新增）；然后 <system_reminder>；最后是图片。
+   * 有聊天记录时接 <Forward Message>（本插件新增）；然后 <system_reminder>；最后是图片和视频截图。
+   * 返回的内容还没交给 dsh 附件服务（dispatch 里统一交）。
    */
-  private async buildContent(abm: AstrBotMessage, messageStr: string, own: Component[], admin: boolean, s: BridgeSettings): Promise<unknown[]> {
+  private async buildContent(abm: AstrBotMessage, messageStr: string, own: Component[], videos: Component[], admin: boolean, s: BridgeSettings): Promise<ModelPart[]> {
     const settings = s
     const callAction = this.deps.callAction
     const safe = async <T>(what: string, task: () => Promise<T>): Promise<T | null> => {
@@ -414,7 +530,7 @@ export class Bridge {
     if (settings.identifier && abm.type === MessageType.GROUP_MESSAGE) {
       text = '[' + (abm.sender.nickname || abm.sender.user_id) + '(' + abm.sender.user_id + ')] ' + text
     }
-    const texts: unknown[] = [{ type: 'text', text }]
+    const texts: ModelPart[] = [{ type: 'text', text }]
     if (quoted !== null) texts.push({ type: 'text', text: quoted.text })
     if (forwarded !== null) texts.push({ type: 'text', text: forwarded.text })
     const reminder = this.reminder(abm, admin, s)
@@ -422,39 +538,33 @@ export class Bridge {
     const asImage = (ref: string): Component => ({ type: 'Image', file: ref, url: ref.startsWith('http') ? ref : '', _type: '', path: '' })
     const quotedImages = (quoted?.imageRefs ?? []).map(asImage)
     const forwardImages = (forwarded?.imageRefs ?? []).map(asImage)
-    const attachments = this.deps.attachments()
-    if (!settings.imageToModel || attachments === undefined || own.length + quotedImages.length + forwardImages.length === 0) {
+    const media = this.deps.media
+    if (!settings.imageToModel || !media.canAttach() || own.length + quotedImages.length + forwardImages.length + videos.length === 0) {
       return texts
     }
-    const parts: unknown[] = [...texts]
+    const parts: ModelPart[] = [...texts]
     let budget = settings.maxImages > 0 ? settings.maxImages : Infinity
     let failed = 0
     const add = async (images: Component[], label?: string): Promise<void> => {
-      const loaded: LoadedImage[] = []
-      for (const img of images) {
-        if (budget <= 0) break
-        try {
-          loaded.push(await loadImage(img, callAction))
-          budget -= 1
-        } catch (e) {
-          failed += 1
-          this.deps.log('warn', '图片读取失败: ' + (e instanceof Error ? e.message : String(e)))
-        }
-      }
-      if (loaded.length === 0) return
+      const got = await media.convert(images, budget)
+      budget -= got.used
+      failed += got.failed
+      if (got.parts.length === 0) return
       if (label !== undefined) parts.push({ type: 'text', text: label })
-      for (const img of loaded) parts.push({ type: 'image', mediaType: img.mediaType, data: img.data, ...(img.name ? { name: img.name } : {}) })
+      parts.push(...got.parts)
     }
     await add(own)
     await add(quotedImages, '（下面是被引用消息里的图片）')
     await add(forwardImages, '（下面是聊天记录里的图片）')
-    if (failed > 0) parts.push({ type: 'text', text: '（有 ' + failed + ' 张图片没能读取）' })
-    try {
-      return await attachments.admitPromptContent(parts)
-    } catch (e) {
-      this.deps.log('warn', '图片交给 dsh 失败，只发文字: ' + (e instanceof Error ? e.message : String(e)))
-      return texts
+    // 本插件新增：视频截图（每个视频前面有一句说明）
+    for (const video of videos) {
+      if (budget <= 0) break
+      const v = await media.video(video, budget)
+      budget -= v.parts.filter(p => p.type === 'image').length
+      parts.push(...v.parts)
     }
+    if (failed > 0) parts.push({ type: 'text', text: '（有 ' + failed + ' 张图片没能读取）' })
+    return parts
   }
 
   private ensureChat(event: AiocqhttpMessageEvent, umo: string): Promise<Chat> {
@@ -483,6 +593,20 @@ export class Bridge {
     const setup: AgentSetup | undefined = presets !== undefined && presetId !== undefined
       ? (async (agentCtx: unknown) => { await presets.mount(agentCtx, presetId) }) as unknown as AgentSetup
       : undefined
+    // 本插件新增：建会话之前先登记它对应哪个 QQ 会话（预设里的插件在 setup 时就能查到）
+    const msg = event.message_obj
+    const isUnique = isGroup && umo !== event.unified_msg_origin
+    const info: SessionInfo = {
+      umo,
+      sessionId,
+      platformId: event.session.platform_name,
+      selfId: event.getSelfId(),
+      type: isGroup ? 'group' : 'private',
+      ...(isGroup ? { groupId: String(event.getGroupId()) } : {}),
+      ...(!isGroup ? { userId: String(msg.session_id) } : isUnique ? { userId: event.getSenderId() } : {}),
+      adminPrivate,
+    }
+    this.infos.set(sessionId, info)
     const persistence = this.deps.persistence()
     const exists = persistence !== undefined && await persistence.stat(sessionId) !== undefined
     let handle: AgentHandle
@@ -498,7 +622,7 @@ export class Bridge {
       })
       this.deps.log('info', '新建会话 ' + sessionId + '（' + umo + (presetId ? '，预设 ' + presetId : '') + (chosen ? '，模型 ' + modelText : '') + '）')
     }
-    const chat: Chat = { umo, session: event.session, handle, lastText: '', replyTo: event }
+    const chat: Chat = { umo, session: event.session, handle, lastText: '', replyTo: event, info, fresh: !exists }
     this.chats.set(umo, chat)
     this.bySession.set(String((handle.agent as Agent).session.id), umo)
     return chat
@@ -521,9 +645,21 @@ export class Bridge {
       const text = chat.lastText
       chat.lastText = ''
       if (text.trim() === '') return
-      void chat.replyTo.send({ chain: [Plain(text)] }).catch(e => {
+      const reply: MessageChain = { chain: [Plain(text)] }
+      void chat.replyTo.send(reply).then(() => {
+        this.notifySent({ umo, session: chat.replyTo.session, text, chain: reply, source: 'reply', time: Date.now() })
+      }, e => {
         this.deps.log('error', '发送回复失败（' + umo + '）: ' + (e instanceof Error ? e.message : String(e)))
       })
+    }
+  }
+
+  /** 发 'napcat/sent'；监听器出错不影响发送。 */
+  notifySent(payload: SentPayload): void {
+    try {
+      this.deps.sent(payload)
+    } catch (e) {
+      this.deps.log('warn', 'napcat/sent 监听器出错: ' + errText(e))
     }
   }
 

@@ -51,3 +51,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
+
+## ffmpeg（不随本插件分发）
+
+设置页「视频」里的一键安装会在运行时从 <https://github.com/BtbN/FFmpeg-Builds>（构建脚本 MIT）下载 FFmpeg 的 LGPL 版独立程序，核对 SHA256 后放进 `<DSH_HOME>/napcat-bridge/ffmpeg/`。FFmpeg 本身按 LGPL-2.1-or-later 授权（<https://ffmpeg.org/legal.html>），本仓库不包含它的任何代码或程序。

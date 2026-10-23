@@ -117,6 +117,41 @@ window.__ModuleLoader__.load({
 			keyUnset: "没有设置 Key。",
 			sttModel: "模型",
 			sttModelHint: "例如 FunAudioLLM/SenseVoiceSmall。",
+			video: "视频",
+			videoHint: "DeepSeek 模型看不了视频原件，所以用 ffmpeg 从视频里截几张画面当图片给她看，前面附一句「视频，时长 0:32，以下是截取的 4 张画面」。没有 ffmpeg 或关掉时她只看到「[视频]」。截图也算在「每条消息最多几张图片」里。",
+			videoFrames: "视频抽帧",
+			videoFramesHint: "找不到 ffmpeg 时自动当作关闭。",
+			videoMaxFrames: "每个视频最多截几张",
+			videoMaxFramesHint: "在整段视频里平均分布，第一张取开头附近。张数越多看得越全，也越费钱。",
+			videoSecondsPerFrame: "短视频少截：每多少秒最多一张",
+			videoSecondsPerFrameHint: "默认 5：10 秒的视频只截 2 张，不会硬凑满。",
+			videoMaxEdge: "截图最长边（像素）",
+			videoMaxEdgeHint: "默认 1024。再大对看清内容帮助不大，只会多花钱。",
+			videoMaxMB: "超过多大只截封面（MB）",
+			videoMaxMBHint: "太大的视频处理慢，只截一张。",
+			videoMaxMinutes: "超过多长只截封面（分钟）",
+			videoMaxMinutesHint: "太长的视频只截一张。",
+			videoTimeout: "处理超时（秒）",
+			videoTimeoutHint: "一个视频最多处理这么久，超时就只写 [视频]。",
+			ffmpegPath: "ffmpeg 位置",
+			ffmpegPathHint: "一般不用填。留空时先找下面「安装」装到插件目录里的，再找系统里的。",
+			ffmpegChecking: "正在查找 ffmpeg…",
+			ffmpegFound: "已找到 ffmpeg（{source}）：{version}",
+			ffmpegSourceConfigured: "上面填的位置",
+			ffmpegSourceBundled: "插件目录",
+			ffmpegSourceSystem: "系统里的",
+			ffmpegMissing: "没找到 ffmpeg，视频只会写成「[视频]」。",
+			ffmpegInstall: "安装 ffmpeg",
+			ffmpegInstallConfirm: "从 GitHub（BtbN/FFmpeg-Builds）下载独立版 ffmpeg，大约 140MB，核对 SHA256 后放进插件目录，不需要管理员权限，也不改系统。现在安装吗？",
+			ffmpegInstallYes: "确认安装",
+			ffmpegInstallNo: "取消",
+			ffmpegUnsupported: "一键安装只支持 Linux（x64 / arm64），这台机器是 {platform}。请自己安装 ffmpeg，例如 Mac 上运行 brew install ffmpeg。",
+			ffmpegDownloading: "正在下载 {asset}：{percent}（{received} / {total} MB）",
+			ffmpegVerifying: "正在核对 SHA256…",
+			ffmpegExtracting: "正在解压…",
+			ffmpegDone: "安装完成：{version}",
+			ffmpegFailed: "安装失败：{error}",
+			ffmpegRecheck: "重新查找",
 			sessionHint: "这些设置只影响新建的会话；已经在聊的会话发 /new 之后才会用上。",
 			uniqueSession: "群里每人单独一个会话",
 			uniqueSessionHint: "打开后同一个群里每个人和她的对话分开记。",
@@ -241,6 +276,41 @@ window.__ModuleLoader__.load({
 			keyUnset: "No key is set.",
 			sttModel: "Model",
 			sttModelHint: "e.g. FunAudioLLM/SenseVoiceSmall.",
+			video: "Video",
+			videoHint: "DeepSeek models cannot take video, so ffmpeg grabs a few frames and sends them as images with a note such as \"video, 0:32, 4 frames follow\". Without ffmpeg, or when off, she only sees [视频]. Frames count toward the per-message image limit.",
+			videoFrames: "Grab video frames",
+			videoFramesHint: "Treated as off when ffmpeg is not found.",
+			videoMaxFrames: "Max frames per video",
+			videoMaxFramesHint: "Spread evenly over the video, the first near the start. More frames show more and cost more.",
+			videoSecondsPerFrame: "Short videos: at most one frame per N seconds",
+			videoSecondsPerFrameHint: "Default 5: a 10-second clip gets 2 frames.",
+			videoMaxEdge: "Frame long edge (px)",
+			videoMaxEdgeHint: "Default 1024. Larger rarely helps and costs more.",
+			videoMaxMB: "Cover only above (MB)",
+			videoMaxMBHint: "Large videos get a single frame.",
+			videoMaxMinutes: "Cover only above (minutes)",
+			videoMaxMinutesHint: "Long videos get a single frame.",
+			videoTimeout: "Timeout (seconds)",
+			videoTimeoutHint: "Per video; on timeout she only sees [视频].",
+			ffmpegPath: "ffmpeg path",
+			ffmpegPathHint: "Usually blank: the copy installed below into the plugin directory is used first, then the system one.",
+			ffmpegChecking: "Looking for ffmpeg…",
+			ffmpegFound: "ffmpeg found ({source}): {version}",
+			ffmpegSourceConfigured: "configured path",
+			ffmpegSourceBundled: "plugin directory",
+			ffmpegSourceSystem: "system",
+			ffmpegMissing: "ffmpeg not found; videos become [视频].",
+			ffmpegInstall: "Install ffmpeg",
+			ffmpegInstallConfirm: "Download a static ffmpeg (about 140 MB) from GitHub BtbN/FFmpeg-Builds, verify its SHA256 and put it in the plugin directory. No admin rights needed and the system is not changed. Install now?",
+			ffmpegInstallYes: "Install",
+			ffmpegInstallNo: "Cancel",
+			ffmpegUnsupported: "One-click install supports Linux (x64 / arm64) only; this machine is {platform}. Install ffmpeg yourself, e.g. brew install ffmpeg on a Mac.",
+			ffmpegDownloading: "Downloading {asset}: {percent} ({received} / {total} MB)",
+			ffmpegVerifying: "Verifying SHA256…",
+			ffmpegExtracting: "Extracting…",
+			ffmpegDone: "Installed: {version}",
+			ffmpegFailed: "Install failed: {error}",
+			ffmpegRecheck: "Check again",
 			sessionHint: "These apply to new sessions; an existing chat picks them up after /new.",
 			uniqueSession: "One session per person in groups",
 			uniqueSessionHint: "Keeps each person's conversation separate within a group.",
@@ -288,7 +358,9 @@ window.__ModuleLoader__.load({
 			".napcatb-details[open] .napcatb-chevron{transform:rotate(90deg)}",
 			".napcatb-detailsBody{display:grid;gap:12px;padding:4px 0 16px}",
 			".napcatb-test{display:grid;gap:6px;margin-top:-4px}",
-			".napcatb-testRow{display:flex;align-items:center;gap:10px}",
+			".napcatb-testRow{display:flex;align-items:center;flex-wrap:wrap;gap:10px}",
+			".napcatb-confirm{display:grid;gap:8px;padding:10px 12px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md,6px)}",
+			".napcatb-result,.napcatb-hint{overflow-wrap:anywhere}",
 			".napcatb-result{margin:0;font-size:12px;line-height:1.5}",
 			".napcatb-ok{color:var(--dsw-alias-state-success-primary,#2f9e44)}",
 			".napcatb-warn{color:var(--dsw-alias-state-warning-primary,#d97706)}",
@@ -348,13 +420,20 @@ window.__ModuleLoader__.load({
 			"friend_message_needs_wake_prefix", "ignore_bot_self_message", "identifier", "imageToModel",
 			"whitelistEnabled", "whitelistIgnoreAdminOnGroup", "whitelistIgnoreAdminOnFriend", "whitelistLog",
 			"emptyMentionWaiting", "emptyMentionNeedReply", "uniqueSession",
-			"datetimeReminder", "groupNameDisplay", "markAdmin", "commandsEnabled", "noPermissionReply"
+			"datetimeReminder", "groupNameDisplay", "markAdmin", "commandsEnabled", "noPermissionReply",
+			"videoFrames"
 		];
 		var TEXTS = [
 			"ws_reverse_host", "id", "workspacePath", "agentPreset", "timezone",
 			"privateAgentPreset", "groupAgentPreset", "adminPrivateAgentPreset",
 			"privateModel", "groupModel", "adminPrivateModel",
-			"sttCommand", "sttApiUrl", "sttModel"
+			"sttCommand", "sttApiUrl", "sttModel", "ffmpegPath"
+		];
+		/** 整数字段：[字段, 最小值] */
+		var INTS = [
+			["ws_reverse_port", 1, 65535], ["maxImages", 0], ["rateLimitCount", 0], ["rateLimitSeconds", 1],
+			["videoMaxFrames", 1], ["videoSecondsPerFrame", 1], ["videoMaxEdge", 64], ["videoMaxMB", 1],
+			["videoMaxMinutes", 1], ["videoTimeoutSeconds", 5]
 		];
 		var LISTS = ["wake_prefix", "admins", "whitelist"];
 		var SECRETS = ["ws_reverse_token", "sttApiKey"];
@@ -362,20 +441,16 @@ window.__ModuleLoader__.load({
 
 		//#region 表单模型
 		function createForm(scope) {
-			var specs = [
-				intField("ws_reverse_port", 1, 65535),
-				intField("maxImages", 0, Number.MAX_SAFE_INTEGER),
-				intField("rateLimitCount", 0, Number.MAX_SAFE_INTEGER),
-				intField("rateLimitSeconds", 1, Number.MAX_SAFE_INTEGER),
+			var specs = INTS.map(function (x) { return intField(x[0], x[1], x[2] === undefined ? Number.MAX_SAFE_INTEGER : x[2]); }).concat([
 				enumField("logLevel", LOG_LEVELS),
 				enumField("rateLimitStrategy", RATE_STRATEGIES),
 				enumField("sttMode", STT_MODES)
-			].concat(LISTS.map(listField), BOOLS.map(boolField), TEXTS.map(function (f) { return P.settingsTextField(f); }));
+			], LISTS.map(listField), BOOLS.map(boolField), TEXTS.map(function (f) { return P.settingsTextField(f); }));
 			var secrets = SECRETS.map(function (field) {
 				return { field: field, write: function (text) { return scope.mutate([{ op: "set", path: [field], value: text }]); } };
 			});
 			var form = new P.SettingsFormModel(scope, specs, secrets);
-			var all = ["ws_reverse_port", "maxImages", "rateLimitCount", "rateLimitSeconds", "logLevel", "rateLimitStrategy", "sttMode"].concat(LISTS, BOOLS, TEXTS, SECRETS);
+			var all = INTS.map(function (x) { return x[0]; }).concat(["logLevel", "rateLimitStrategy", "sttMode"], LISTS, BOOLS, TEXTS, SECRETS);
 			// 设置服务不把密钥发给浏览器，只告诉它有没有设置；由 refreshSecrets 向服务查询
 			var secretSet = {};
 			function compute() {
@@ -485,6 +560,70 @@ window.__ModuleLoader__.load({
 				result ? h("p", { className: "napcatb-result napcatb-" + result.tone, role: "status" }, result.text) : null);
 		}
 
+		/** ffmpeg 状态和一键安装（GET/POST <dsh>/api/napcat-bridge/ffmpeg[/install]）。 */
+		function FfmpegStatus(props) {
+			var t = props.t;
+			var stHook = React.useState(null);
+			var st = stHook[0], setSt = stHook[1];
+			var errHook = React.useState(null);
+			var err = errHook[0], setErr = errHook[1];
+			var url = function (path) { return new URL("api/napcat-bridge/" + path, document.baseURI).href; };
+			function load(method, path) {
+				return fetch(url(path), { method: method, credentials: "same-origin", cache: "no-store" })
+					.then(function (res) { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+					.then(function (next) { setErr(null); setSt(next); return next; },
+						function (error) { setErr(error && error.message || String(error)); });
+			}
+			React.useEffect(function () { load("GET", "ffmpeg"); }, []);
+			var busy = st && st.install && ["downloading", "verifying", "extracting"].indexOf(st.install.state) >= 0;
+			React.useEffect(function () {
+				if (!busy) return void 0;
+				var timer = setInterval(function () { load("GET", "ffmpeg"); }, 1000);
+				return function () { clearInterval(timer); };
+			}, [busy]);
+			// 页面内确认（不用 window.confirm：dsh 桌面端里浏览器弹窗可能不显示）
+			var askHook = React.useState(false);
+			var asking = askHook[0], setAsking = askHook[1];
+			function install() {
+				setAsking(false);
+				load("POST", "ffmpeg/install");
+			}
+			var mb = function (n) { return typeof n === "number" ? (n / 1048576).toFixed(0) : "?"; };
+			var lines = [];
+			if (err) lines.push({ tone: "error", text: t("testFailed", { error: err }) });
+			else if (!st) lines.push({ tone: "hint", text: t("ffmpegChecking") });
+			else {
+				if (st.found) {
+					var source = t(st.found.source === "configured" ? "ffmpegSourceConfigured" : st.found.source === "bundled" ? "ffmpegSourceBundled" : "ffmpegSourceSystem");
+					lines.push({ tone: "ok", text: t("ffmpegFound", { source: source, version: st.found.version }) });
+				} else {
+					lines.push({ tone: "warn", text: t("ffmpegMissing") });
+					if (!st.installSupported) lines.push({ tone: "hint", text: t("ffmpegUnsupported", { platform: st.platform }) });
+				}
+				var ins = st.install || { state: "idle" };
+				if (ins.state === "downloading") {
+					var percent = ins.total ? Math.floor((ins.received || 0) * 100 / ins.total) + "%" : "…";
+					lines.push({ tone: "hint", text: t("ffmpegDownloading", { asset: ins.asset || "ffmpeg", percent: percent, received: mb(ins.received), total: mb(ins.total) }) });
+				} else if (ins.state === "verifying") lines.push({ tone: "hint", text: t("ffmpegVerifying") });
+				else if (ins.state === "extracting") lines.push({ tone: "hint", text: t("ffmpegExtracting") });
+				else if (ins.state === "done") lines.push({ tone: "ok", text: t("ffmpegDone", { version: ins.version || "" }) });
+				else if (ins.state === "failed") lines.push({ tone: "error", text: t("ffmpegFailed", { error: ins.error || "?" }) });
+			}
+			var canInstall = st && !st.found && st.installSupported && !busy;
+			return h("div", { className: "napcatb-test" },
+				canInstall && asking ? h("div", { className: "napcatb-confirm", role: "group", "aria-label": t("ffmpegInstall") },
+					h("p", { className: "napcatb-hint" }, t("ffmpegInstallConfirm")),
+					h("div", { className: "napcatb-testRow" },
+						h(P.Button, { size: "sm", onClick: install }, t("ffmpegInstallYes")),
+						h(P.Button, { size: "sm", onClick: function () { setAsking(false); } }, t("ffmpegInstallNo")))) : null,
+				h("div", { className: "napcatb-testRow" },
+					canInstall && !asking ? h(P.Button, { size: "sm", onClick: function () { setAsking(true); } }, t("ffmpegInstall")) : null,
+					h(P.Button, { size: "sm", disabled: busy, onClick: function () { load("GET", "ffmpeg"); } }, t("ffmpegRecheck"))),
+				lines.map(function (line, i) {
+					return h("p", { key: i, className: line.tone === "hint" ? "napcatb-hint" : "napcatb-result napcatb-" + line.tone, role: i === 0 ? "status" : void 0 }, line.text);
+				}));
+		}
+
 		function Select(props) {
 			var field = props.state[props.field];
 			return h("div", { className: "napcatb-field" },
@@ -565,6 +704,16 @@ window.__ModuleLoader__.load({
 					sttMode === "openai" ? h(Value, Object.assign({ field: "sttApiUrl", label: t("sttApiUrl"), hint: t("sttApiUrlHint") }, common)) : null,
 					sttMode === "openai" ? h(Secret, Object.assign({ field: "sttApiKey", label: t("sttApiKey"), hint: t("sttApiKeyHint"), setLabel: t("keySet"), unsetLabel: t("keyUnset") }, common)) : null,
 					sttMode === "openai" ? h(Value, Object.assign({ field: "sttModel", label: t("sttModel"), hint: t("sttModelHint") }, common)) : null),
+				h(Section, { title: t("video"), hint: t("videoHint") },
+					h(Toggle, Object.assign({ field: "videoFrames", label: t("videoFrames"), hint: t("videoFramesHint") }, common)),
+					h(FfmpegStatus, { t: t }),
+					h(Value, Object.assign({ field: "videoMaxFrames", label: t("videoMaxFrames"), hint: t("videoMaxFramesHint"), numeric: true, invalidLabel: t("invalidPositive") }, common)),
+					h(Value, Object.assign({ field: "videoSecondsPerFrame", label: t("videoSecondsPerFrame"), hint: t("videoSecondsPerFrameHint"), numeric: true, invalidLabel: t("invalidPositive") }, common)),
+					h(Value, Object.assign({ field: "videoMaxEdge", label: t("videoMaxEdge"), hint: t("videoMaxEdgeHint"), numeric: true, invalidLabel: t("invalid") }, common)),
+					h(Value, Object.assign({ field: "videoMaxMB", label: t("videoMaxMB"), hint: t("videoMaxMBHint"), numeric: true, invalidLabel: t("invalidPositive") }, common)),
+					h(Value, Object.assign({ field: "videoMaxMinutes", label: t("videoMaxMinutes"), hint: t("videoMaxMinutesHint"), numeric: true, invalidLabel: t("invalidPositive") }, common)),
+					h(Value, Object.assign({ field: "videoTimeoutSeconds", label: t("videoTimeout"), hint: t("videoTimeoutHint"), numeric: true, invalidLabel: t("invalid") }, common)),
+					h(Value, Object.assign({ field: "ffmpegPath", label: t("ffmpegPath"), hint: t("ffmpegPathHint") }, common))),
 				h(Section, { title: t("session"), hint: t("sessionHint") },
 					h(Value, Object.assign({ field: "workspacePath", label: t("workspacePath"), hint: t("workspacePathHint") }, common)),
 					h(Toggle, Object.assign({ field: "uniqueSession", label: t("uniqueSession"), hint: t("uniqueSessionHint") }, common)),

@@ -4,15 +4,19 @@ import z from '@deepseek-ai/schemastery'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
-import { AiocqhttpAdapter, AiocqhttpMessageEvent, MessageType, type AstrBotMessage, type MessageSession } from './adapter.js'
-import { Bridge } from './bridge.js'
+import { AiocqhttpAdapter, AiocqhttpMessageEvent, MessageType, sessionToString, type AstrBotMessage, type MessageSession } from './adapter.js'
+import { Bridge, type PromptPayload, type SentPayload, type SessionChange, type SessionInfo } from './bridge.js'
 import type { MessageChain } from './components.js'
+import { findFfmpeg, installFfmpeg, platformTag, type InstallState } from './ffmpeg.js'
+import { Media } from './media.js'
 import type { Logger } from './onebot/server.js'
 import { SessionStore, defaultDataDir } from './store.js'
 import { join } from 'node:path'
 
 export * from './adapter.js'
 export * from './components.js'
+export type { PromptPayload, SentPayload, SessionChange, SessionInfo } from './bridge.js'
+export type { Converted, Media, ModelPart } from './media.js'
 export { ActionFailed, ApiNotAvailable, NetworkError } from './onebot/errors.js'
 
 export interface Config {
@@ -57,6 +61,14 @@ export interface Config {
   sttApiUrl: string
   sttApiKey: string
   sttModel: string
+  videoFrames: boolean
+  videoMaxFrames: number
+  videoSecondsPerFrame: number
+  videoMaxEdge: number
+  videoMaxMB: number
+  videoMaxMinutes: number
+  videoTimeoutSeconds: number
+  ffmpegPath: string
   logLevel: 'debug' | 'info' | 'warn' | 'error'
 }
 
@@ -112,6 +124,15 @@ export const Config: z<LiveConfig> = z.object({
   sttApiUrl: z.string().default('').volatile().description('OpenAI 兼容接口地址（到 /v1 为止）'),
   sttApiKey: z.string().role('secret').volatile().description('接口 Key'),
   sttModel: z.string().default('').volatile().description('转写模型名'),
+  // 视频（本插件新增）：用 ffmpeg 截几张画面当图片交给模型
+  videoFrames: z.boolean().default(true).volatile().description('视频抽帧：截几张画面交给模型（找不到 ffmpeg 时自动当作关闭）'),
+  videoMaxFrames: z.natural().min(1).default(4).volatile().description('每个视频最多截几张'),
+  videoSecondsPerFrame: z.natural().min(1).default(5).volatile().description('短视频少截：每多少秒最多一张'),
+  videoMaxEdge: z.natural().min(64).default(1024).volatile().description('截图最长边（像素）'),
+  videoMaxMB: z.natural().min(1).default(100).volatile().description('超过这么大（MB）只截封面'),
+  videoMaxMinutes: z.natural().min(1).default(10).volatile().description('超过这么长（分钟）只截封面'),
+  videoTimeoutSeconds: z.natural().min(5).default(30).volatile().description('处理一个视频最多用几秒，超时只写 [视频]'),
+  ffmpegPath: z.string().default('').volatile().description('ffmpeg 位置；留空先找插件自己装的，再找系统里的'),
   logLevel: z.union(['debug', 'info', 'warn', 'error']).default('info').volatile().description('日志级别'),
 }) as never
 
@@ -124,10 +145,18 @@ export interface NapcatService {
   adapter: AiocqhttpAdapter
   /** 调用任意 OneBot API */
   callAction(action: string, params?: Record<string, unknown>): Promise<any>
-  /** 按会话主动发送（AstrBot send_by_session） */
+  /** 按会话主动发送（AstrBot send_by_session）；发出后也会发 'napcat/sent' */
   sendBySession(session: MessageSession, chain: MessageChain): Promise<void>
   /** 已建立的会话 */
   sessions(): Array<{ umo: string; sessionId: string }>
+  /** dsh 会话 id → 对应的 QQ 会话（私聊/群聊、QQ 号、群号、是不是主人私聊）；不是 QQ 会话时 undefined */
+  sessionInfo(sessionId: string): SessionInfo | undefined
+  /** QQ 会话（unified_msg_origin）→ 当前的会话信息 */
+  sessionInfoByUmo(umo: string): SessionInfo | undefined
+  /** 让某个 QQ 会话换一个新的 dsh 会话（旧的留在 dsh 里，下一条消息进新会话） */
+  rotateSession(umo: string): Promise<{ oldSessionId: string; newSessionId: string }>
+  /** 图片、语音、视频 → 模型内容（按插件一的设置：语音转文字、视频抽帧、图片数量） */
+  media: Media
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -137,6 +166,12 @@ declare module '@deepseek-ai/cordis' {
   interface Events {
     /** 每条转换好的 OneBot 消息/通知/请求；isWake 表示是否会交给模型 */
     'napcat/message'(abm: AstrBotMessage, event: AiocqhttpMessageEvent, isWake: boolean): void
+    /** 交给模型之前（serial）：监听者可以直接改 payload.content，往前后加文字或图片 */
+    'napcat/prompt'(payload: PromptPayload): void | Promise<void>
+    /** 她发出了一条 QQ 消息 */
+    'napcat/sent'(payload: SentPayload): void
+    /** QQ 会话换了新的 dsh 会话（/new、/reset 或 rotateSession） */
+    'napcat/session-changed'(change: SessionChange): void
   }
 }
 
@@ -163,15 +198,37 @@ export function apply(ctx: Context, live: LiveConfig): void {
     else console.log(line)
   }
 
+  const callAction = (action: string, params: Record<string, unknown> = {}): Promise<any> => adapter.bot.callAction(action, params)
+  const videoSettings = () => ({
+    enabled: get('videoFrames'),
+    maxFrames: get('videoMaxFrames'),
+    secondsPerFrame: get('videoSecondsPerFrame'),
+    maxEdge: get('videoMaxEdge'),
+    maxMB: get('videoMaxMB'),
+    maxMinutes: get('videoMaxMinutes'),
+    timeoutSeconds: get('videoTimeoutSeconds'),
+    ffmpegPath: get('ffmpegPath'),
+  })
+  const sttSettings = () => ({ mode: get('sttMode'), command: get('sttCommand'), apiUrl: get('sttApiUrl'), apiKey: get('sttApiKey'), model: get('sttModel') })
+  const media = new Media({
+    callAction,
+    attachments: () => ctx.get('attachments' as never) as never,
+    settings: () => ({ imageToModel: get('imageToModel'), maxImages: get('maxImages'), stt: sttSettings(), video: videoSettings() }),
+    log,
+  })
+
   const bridge: Bridge = new Bridge({
     agents: ctx.agents,
     defaultModel: () => ctx.get('agentDefaultModel' as never) as Context['agentDefaultModel'],
     presets: () => ctx.get('agentPresets' as never) as Context['agentPresets'],
     persistence: () => ctx.get('sessionPersistence' as never) as Context['sessionPersistence'],
-    attachments: () => ctx.get('attachments' as never) as never,
-    callAction: (action: string, params: Record<string, unknown>): Promise<any> => adapter.bot.callAction(action, params),
+    media,
+    callAction,
     onSessionEvent: listener => ctx.on('session/event' as never, ((session: Session, event: SessionEvent) => listener(session, event)) as never),
     emit: (abm, event, isWake) => ctx.emit('napcat/message', abm, event, isWake),
+    prompt: payload => ctx.serial('napcat/prompt', payload),
+    sent: payload => ctx.emit('napcat/sent', payload),
+    sessionChanged: change => ctx.emit('napcat/session-changed', change),
     store: new SessionStore(join(defaultDataDir(), 'sessions.json')),
     settings: () => ({
       cwd: get('workspacePath') || process.cwd(),
@@ -198,7 +255,8 @@ export function apply(ctx: Context, live: LiveConfig): void {
       commands: { enabled: get('commandsEnabled'), noPermissionReply: get('noPermissionReply') },
       presets: { default: get('agentPreset'), private: get('privateAgentPreset'), group: get('groupAgentPreset'), adminPrivate: get('adminPrivateAgentPreset') },
       models: { private: get('privateModel'), group: get('groupModel'), adminPrivate: get('adminPrivateModel') },
-      stt: { mode: get('sttMode'), command: get('sttCommand'), apiUrl: get('sttApiUrl'), apiKey: get('sttApiKey'), model: get('sttModel') },
+      stt: sttSettings(),
+      video: videoSettings(),
     }),
     log,
   })
@@ -214,11 +272,43 @@ export function apply(ctx: Context, live: LiveConfig): void {
 
   const service: NapcatService = {
     adapter,
-    callAction: (action, params = {}) => adapter.bot.callAction(action, params),
-    sendBySession: (session, chain) => adapter.sendBySession(session, chain),
+    callAction,
+    sendBySession: async (session, chain) => {
+      await adapter.sendBySession(session, chain)
+      const text = chain.chain.filter(c => c.type === 'Plain').map(c => String(c.text ?? '')).join('')
+      bridge.notifySent({ umo: sessionToString(session), session, text, chain, source: 'service', time: Date.now() })
+    },
     sessions: () => bridge.sessions(),
+    sessionInfo: sessionId => bridge.sessionInfo(sessionId),
+    sessionInfoByUmo: umo => bridge.sessionInfoByUmo(umo),
+    rotateSession: umo => bridge.rotateSession(umo),
+    media,
   }
   ctx.provide('napcat', service)
+
+  // 视频抽帧用的 ffmpeg：设置页查状态、一键安装
+  let install: InstallState = { state: 'idle' }
+  const ffmpegStatus = async (fresh: boolean): Promise<Record<string, unknown>> => {
+    const found = await findFfmpeg(get('ffmpegPath'), fresh)
+    return {
+      found: found ?? null,
+      installSupported: platformTag() !== undefined,
+      platform: process.platform + '-' + process.arch,
+      install,
+    }
+  }
+  const startInstall = (): void => {
+    if (['downloading', 'verifying', 'extracting'].includes(install.state)) return
+    install = { state: 'downloading' }
+    log('info', '开始安装 ffmpeg')
+    installFfmpeg({ onProgress: next => { install = next } }).then(found => {
+      install = { state: 'done', version: found.version, finishedAt: Date.now() }
+      log('info', 'ffmpeg 已安装：' + found.version)
+    }, (error: unknown) => {
+      install = { state: 'failed', error: errText(error), finishedAt: Date.now() }
+      log('error', '安装 ffmpeg 失败: ' + errText(error))
+    })
+  }
 
   // 设置页「测试连接」：GET <dsh>/api/napcat-bridge/status。
   // 挂在 dsh 的 /api 钩子上，请求先通过 dsh 网页的登录校验才会到这里；返回里不含 Token。
@@ -249,12 +339,21 @@ export function apply(ctx: Context, live: LiveConfig): void {
       lastRejected: rejected,
     }
   }
+  // 视频：GET <dsh>/api/napcat-bridge/ffmpeg 查状态；POST <dsh>/api/napcat-bridge/ffmpeg/install 开始安装
   ctx.on('connection/request' as never, (async (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: () => Promise<void>) => {
     const path = new URL(req.url ?? '/', 'http://localhost').pathname
-    if (!path.endsWith('/napcat-bridge/status')) return next()
-    const body = JSON.stringify(await status())
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-    res.end(body)
+    const json = (code: number, value: unknown): void => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(JSON.stringify(value))
+    }
+    if (path.endsWith('/napcat-bridge/status')) return json(200, await status())
+    if (path.endsWith('/napcat-bridge/ffmpeg') && req.method === 'GET') return json(200, await ffmpegStatus(true))
+    if (path.endsWith('/napcat-bridge/ffmpeg/install')) {
+      if (req.method !== 'POST') return json(405, { error: 'POST only' })
+      startInstall()
+      return json(200, await ffmpegStatus(false))
+    }
+    return next()
   }) as never)
 
   // 本插件自带设置页（client.js），告诉 dsh 不用按 schema 自动生成表单

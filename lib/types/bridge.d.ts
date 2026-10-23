@@ -1,7 +1,10 @@
 import type { AgentRegistry } from '@deepseek-ai/dsh-agent';
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session';
-import { AiocqhttpMessageEvent, MessageType, sessionToString, type AstrBotMessage } from './adapter.js';
-import { type SttSettings } from './stt.js';
+import { AiocqhttpMessageEvent, MessageType, sessionToString, type AstrBotMessage, type MessageSession } from './adapter.js';
+import { type MessageChain } from './components.js';
+import type { VideoSettings } from './ffmpeg.js';
+import type { Media, ModelPart } from './media.js';
+import type { SttSettings } from './stt.js';
 import type { SessionStore } from './store.js';
 import type { Logger } from './onebot/server.js';
 declare module '@deepseek-ai/dsh-llm' {
@@ -42,14 +45,18 @@ export interface BridgeDeps {
     } | undefined;
     /** 会话事件来源（ctx.on('session/event')） */
     onSessionEvent(listener: (session: Session, event: SessionEvent) => void): () => void;
-    /** dsh 附件服务（可选；没有时图片不交给模型） */
-    attachments(): {
-        admitPromptContent(content: readonly unknown[]): Promise<unknown[]>;
-    } | undefined;
+    /** 图片、语音、视频 → 模型内容 */
+    media: Media;
     /** 调 OneBot API（读图片时 get_image 兜底） */
     callAction(action: string, params: Record<string, unknown>): Promise<any>;
     /** 广播给其他插件 */
     emit(abm: AstrBotMessage, event: AiocqhttpMessageEvent, isWake: boolean): void;
+    /** 交给模型前让其他插件加内容（ctx.serial('napcat/prompt')） */
+    prompt(payload: PromptPayload): Promise<unknown>;
+    /** 她发出了一条消息（ctx.emit('napcat/sent')） */
+    sent(payload: SentPayload): void;
+    /** QQ 会话换了 dsh 会话（ctx.emit('napcat/session-changed')） */
+    sessionChanged(change: SessionChange): void;
     /** 当前设置（每次用到时读取，设置页改了立即生效） */
     settings(): BridgeSettings;
     /** 记住每个 QQ 会话当前的 dsh 会话 id */
@@ -114,6 +121,59 @@ export interface BridgeSettings {
         adminPrivate: string;
     };
     stt: SttSettings;
+    video: VideoSettings;
+}
+/** 一个 dsh 会话对应哪个 QQ 会话（本插件新增，给其他插件按会话分规则用）。 */
+export interface SessionInfo {
+    /** unified_msg_origin */
+    umo: string;
+    /** dsh 会话 id */
+    sessionId: string;
+    /** 平台 ID（设置里的 id） */
+    platformId: string;
+    /** 她自己的 QQ 号 */
+    selfId: string;
+    type: 'private' | 'group';
+    /** 私聊：对方 QQ 号；群里每人单独一个会话时：这个人的 QQ 号 */
+    userId?: string;
+    /** 群号 */
+    groupId?: string;
+    /** 管理员（主人）的私聊 */
+    adminPrivate: boolean;
+}
+/** 'napcat/prompt' 的参数：监听者直接改 content（在前后插入文字或图片）。 */
+export interface PromptPayload {
+    info: SessionInfo;
+    /** 这是这个 dsh 会话的第一轮（刚新建的会话） */
+    newSession: boolean;
+    /** 唤醒她的那条消息 */
+    message: AstrBotMessage;
+    /**
+     * 要交给模型的内容，还没经过 dsh 附件服务。
+     * 元素是 { type: 'text', text } 或 { type: 'image', mediaType, data(base64) }，插件一之后统一交给附件服务。
+     */
+    content: ModelPart[];
+}
+/** 'napcat/sent' 的参数。 */
+export interface SentPayload {
+    /** unified_msg_origin */
+    umo: string;
+    session: MessageSession;
+    /** 发出去的文字（只取文字部分） */
+    text: string;
+    chain: MessageChain;
+    /** reply：她一轮说完的回复；service：其他插件通过 ctx.napcat.sendBySession 发的 */
+    source: 'reply' | 'service';
+    /** 发出的时间（毫秒） */
+    time: number;
+}
+/** 'napcat/session-changed' 的参数。 */
+export interface SessionChange {
+    umo: string;
+    oldSessionId: string;
+    newSessionId: string;
+    /** command：QQ 里发了 /new 或 /reset；rotate：其他插件调用了 ctx.napcat.rotateSession */
+    reason: 'command' | 'rotate';
 }
 /** 当前时间，格式同 AstrBot：2026-10-23 21:40 (GMT+8), Weekday: Friday */
 export declare function formatNow(timezone: string, now?: Date): string;
@@ -134,6 +194,8 @@ export declare class Bridge {
     private readonly chats;
     private readonly bySession;
     private readonly creating;
+    /** dsh 会话 id → QQ 会话信息（建会话之前就登记，预设里的插件启动时就能查到） */
+    private readonly infos;
     /** 只 @ 不说话的人：key = 会话|QQ 号，值 = 等到什么时候 */
     private readonly waiters;
     /** 频率限制：每个会话最近处理的时间 */
@@ -153,18 +215,30 @@ export declare class Bridge {
     private dispatch;
     /** QQ 里的指令。返回 true 表示已处理（不再交给模型）。 */
     private command;
-    /** /new、/reset：换一个新的 dsh 会话，旧的留在 dsh 里。 */
+    /** /new、/reset、rotateSession：换一个新的 dsh 会话，旧的留在 dsh 里。返回新旧会话 id。 */
     private startNewSession;
+    /** 给其他插件用：让某个 QQ 会话换一个新的 dsh 会话（下一条消息进新会话）。 */
+    rotateSession(umo: string): Promise<{
+        oldSessionId: string;
+        newSessionId: string;
+    }>;
+    /** dsh 会话 id → QQ 会话信息。 */
+    sessionInfo(sessionId: string): SessionInfo | undefined;
+    /** QQ 会话（unified_msg_origin）→ 当前的会话信息。 */
+    sessionInfoByUmo(umo: string): SessionInfo | undefined;
     /** AstrBot _append_system_reminders；markAdmin 为本插件新增。 */
     private reminder;
     /**
      * 交给模型的内容：（群里）[昵称(QQ号)] + 文字；有引用时接 <Quoted Message>（照 AstrBot），
-     * 有聊天记录时接 <Forward Message>（本插件新增）；然后 <system_reminder>；最后是图片。
+     * 有聊天记录时接 <Forward Message>（本插件新增）；然后 <system_reminder>；最后是图片和视频截图。
+     * 返回的内容还没交给 dsh 附件服务（dispatch 里统一交）。
      */
     private buildContent;
     private ensureChat;
     private createChat;
     private onSessionEvent;
+    /** 发 'napcat/sent'；监听器出错不影响发送。 */
+    notifySent(payload: SentPayload): void;
     /** 已建立的会话（unified_msg_origin → dsh 会话 id）。 */
     sessions(): Array<{
         umo: string;

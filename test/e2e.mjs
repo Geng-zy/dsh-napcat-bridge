@@ -300,6 +300,21 @@ await new Promise(r => setTimeout(r, 3000))
 if (modelRequests.length !== before6) await fail('QQ 管家的消息被交给了模型')
 log('QQ 管家屏蔽 OK')
 
+// 13. 视频：文字里写 [视频]（测试环境没有 ffmpeg，或视频取不到时都是这样），不会被丢掉
+const before13 = modelRequests.length
+privateMsg([{ type: 'video', data: { file: 'v.mp4', url: 'http://127.0.0.1:9/none.mp4' } }])
+await waitFor(() => modelRequests.length > before13, '视频消息交给模型')
+if (modelRequests.slice(before13)[0] !== '[视频]') await fail('视频消息模型收到的不对：' + JSON.stringify(modelRequests.slice(before13)))
+log('视频占位 OK')
+
+// 14. ffmpeg 状态接口：要先登录；返回有没有 ffmpeg、能不能一键安装
+const anonFf = await fetch(webBase + 'api/napcat-bridge/ffmpeg')
+if (anonFf.status !== 401) await fail('没登录也能访问 ffmpeg 接口：' + anonFf.status)
+const ffRes = await fetch(webBase + 'api/napcat-bridge/ffmpeg', { headers: { cookie } })
+const ff = ffRes.ok ? await ffRes.json() : null
+if (!ff || !('found' in ff) || typeof ff.installSupported !== 'boolean' || ff.install?.state !== 'idle') await fail('ffmpeg 状态接口返回不对：' + ffRes.status + ' ' + JSON.stringify(ff))
+log('ffmpeg 状态接口 OK（' + (ff.found ? '找到 ' + ff.found.version : '没找到') + '）')
+
 log('全部通过')
 if (process.env.E2E_HOLD) {
   // 保留 dsh 和假 NapCat，方便在浏览器里看设置页；Ctrl-C 结束

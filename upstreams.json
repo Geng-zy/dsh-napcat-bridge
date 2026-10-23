@@ -29,6 +29,10 @@
     "node": {
       "aligned": "24.22.1",
       "source": "nodejs.org 的 Node 24 最新版本（测试环境用；插件要求 >=22）"
+    },
+    "ffmpeg": {
+      "aligned": "n9.0",
+      "source": "GitHub BtbN/FFmpeg-Builds latest release 里 Linux x64 LGPL 正式版分支的最新版本（一键安装自动选最新分支；这里只用来发现命名规则变化或新分支）"
     }
   }
 }

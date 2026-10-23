@@ -34,6 +34,14 @@ const checks = {
     const c = await get('https://api.github.com/repos/koishijs/QFace/commits?path=public/assets/qq_emoji/_index.v2.json&per_page=1')
     return { latest: c[0].sha.slice(0, 7), note: '提交于 ' + c[0].commit.author.date }
   },
+  ffmpeg: async () => {
+    const rel = await get('https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest')
+    const names = rel.assets.map(a => a.name)
+    const versions = names.map(n => /^ffmpeg-n(\d+\.\d+)-latest-linux64-lgpl-/.exec(n)?.[1]).filter(Boolean)
+      .sort((a, b) => { const [x1, y1] = a.split('.').map(Number); const [x2, y2] = b.split('.').map(Number); return x1 - x2 || y1 - y2 })
+    const sums = names.includes('checksums.sha256') ? '' : '；没有 checksums.sha256，一键安装会失败'
+    return { latest: versions.length > 0 ? 'n' + versions.at(-1) : '（没找到 linux64 LGPL 包，检查命名是否变了）', note: '一键安装用的包' + sums }
+  },
   node: async () => {
     const list = await get('https://nodejs.org/dist/index.json')
     return { latest: list.find(r => r.version.startsWith('v24.')).version.slice(1) }
