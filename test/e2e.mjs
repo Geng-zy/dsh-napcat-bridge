@@ -95,6 +95,10 @@ writeFileSync(join(profile, 'cordis.patch.yml'), `- id: napcat-bridge
     ws_reverse_token: ${TOKEN}
     workspacePath: ${workspace}
     logLevel: debug
+    typingCharsPerMinute: 6000
+    typingMinSeconds: 1
+    typingMaxSeconds: 1
+    groupMinGapSeconds: 0
 `)
 
 const dsh = spawn(process.env.DSH_BIN ?? 'dsh', ['web', '--host', '127.0.0.1', '--port', process.env.E2E_WEB_PORT ?? '0', '--no-open'], {

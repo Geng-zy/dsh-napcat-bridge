@@ -6,6 +6,7 @@ import type { VideoSettings } from './ffmpeg.js';
 import type { Media, ModelPart } from './media.js';
 import type { SttSettings } from './stt.js';
 import type { SessionStore } from './store.js';
+import { type PaceSettings } from './pacer.js';
 import type { Logger } from './onebot/server.js';
 declare module '@deepseek-ai/dsh-llm' {
     interface MessageSourceMap {
@@ -70,6 +71,8 @@ export interface BridgeDeps {
     /** 记住每个 QQ 会话当前的 dsh 会话 id */
     store: SessionStore;
     log: Logger;
+    /** 测试用：替换等待 */
+    sleep?: (ms: number) => Promise<void>;
 }
 export interface BridgeSettings {
     cwd: string;
@@ -132,6 +135,8 @@ export interface BridgeSettings {
     video: VideoSettings;
     /** 她回复里以这个开头时不发出去（主动唤醒时她决定不说话用） */
     silenceToken: string;
+    /** 发消息的节奏：打字速度、群里的发言频率（本插件新增，见 pacer.ts） */
+    pace: PaceSettings;
 }
 /** 一个 dsh 会话对应哪个 QQ 会话（本插件新增，给其他插件按会话分规则用）。 */
 export interface SessionInfo {
@@ -211,6 +216,7 @@ export declare class Bridge {
     /** 频率限制：每个会话最近处理的时间 */
     private readonly timestamps;
     private readonly off;
+    private readonly pacer;
     constructor(deps: BridgeDeps);
     /** unified_msg_origin；开了 unique_session 时群里按 QQ号_群号 分会话（同 AstrBot）。 */
     private umoOf;

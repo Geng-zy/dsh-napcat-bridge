@@ -21,6 +21,7 @@ import type { Media, ModelPart } from './media.js'
 import { extractForwards, extractQuoted } from './quoted.js'
 import type { SttSettings } from './stt.js'
 import type { SessionStore } from './store.js'
+import { Pacer, type PaceSettings } from './pacer.js'
 import type { Logger } from './onebot/server.js'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -72,6 +73,8 @@ export interface BridgeDeps {
   /** 记住每个 QQ 会话当前的 dsh 会话 id */
   store: SessionStore
   log: Logger
+  /** 测试用：替换等待 */
+  sleep?: (ms: number) => Promise<void>
 }
 
 export interface BridgeSettings {
@@ -105,6 +108,8 @@ export interface BridgeSettings {
   video: VideoSettings
   /** 她回复里以这个开头时不发出去（主动唤醒时她决定不说话用） */
   silenceToken: string
+  /** 发消息的节奏：打字速度、群里的发言频率（本插件新增，见 pacer.ts） */
+  pace: PaceSettings
 }
 
 /** 一个 dsh 会话对应哪个 QQ 会话（本插件新增，给其他插件按会话分规则用）。 */
@@ -296,7 +301,10 @@ export class Bridge {
   private readonly timestamps = new Map<string, number[]>()
   private readonly off: () => void
 
+  private readonly pacer: Pacer
+
   constructor(private readonly deps: BridgeDeps) {
+    this.pacer = new Pacer({ settings: () => deps.settings().pace, log: deps.log, ...(deps.sleep ? { sleep: deps.sleep } : {}) })
     this.off = deps.onSessionEvent((session, event) => this.onSessionEvent(session, event))
   }
 
@@ -710,7 +718,9 @@ export class Bridge {
         return
       }
       const reply: MessageChain = { chain: [Plain(text)] }
-      void chat.send(reply).then(() => {
+      // 本插件新增：像真人一样按打字速度等一会儿，群里守发言频率
+      void this.pacer.run(umo, chat.info.type === 'group', text, () => chat.send(reply)).then(result => {
+        if (result === 'dropped') return
         this.notifySent({ umo, session: chat.session, text, chain: reply, source: 'reply', time: Date.now() })
       }, e => {
         this.deps.log('error', '发送回复失败（' + umo + '）: ' + (e instanceof Error ? e.message : String(e)))

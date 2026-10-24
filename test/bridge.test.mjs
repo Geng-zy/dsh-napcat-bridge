@@ -32,6 +32,7 @@ function settings(over = {}) {
     stt: { mode: 'off', command: '', apiUrl: '', apiKey: '', model: '' },
     video: { enabled: true, maxFrames: 4, secondsPerFrame: 5, maxEdge: 1024, maxMB: 100, maxMinutes: 10, timeoutSeconds: 30, ffmpegPath: '/nonexistent/ffmpeg' },
     silenceToken: '[不发]',
+    pace: { typingPrivate: false, typingGroup: false, charsPerMinute: 0, typingMinSeconds: 0, typingMaxSeconds: 0, groupMinGapSeconds: 0, groupMaxPerWindow: 0, groupWindowSeconds: 60, maxWaitSeconds: 120 },
     ...over,
   }
 }

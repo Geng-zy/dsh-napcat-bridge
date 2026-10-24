@@ -70,6 +70,15 @@ export interface Config {
   videoTimeoutSeconds: number
   ffmpegPath: string
   silenceToken: string
+  typingPrivate: boolean
+  typingGroup: boolean
+  typingCharsPerMinute: number
+  typingMinSeconds: number
+  typingMaxSeconds: number
+  groupMinGapSeconds: number
+  groupMaxPerWindow: number
+  groupWindowSeconds: number
+  sendMaxWaitSeconds: number
   logLevel: 'debug' | 'info' | 'warn' | 'error'
 }
 
@@ -135,6 +144,15 @@ export const Config: z<LiveConfig> = z.object({
   videoTimeoutSeconds: z.natural().min(5).default(30).volatile().description('处理一个视频最多用几秒，超时只写 [视频]'),
   ffmpegPath: z.string().default('').volatile().description('ffmpeg 位置；留空先找插件自己装的，再找系统里的'),
   silenceToken: z.string().default('[不发]').volatile().description('她的回复以这个开头时不发出去（主动唤醒时她决定不说话用）'),
+  typingPrivate: z.boolean().default(true).volatile().description('私聊里按打字速度等一会儿再发'),
+  typingGroup: z.boolean().default(true).volatile().description('群里按打字速度等一会儿再发'),
+  typingCharsPerMinute: z.natural().default(60).volatile().description('打字速度：每分钟几个字（0 = 不等）'),
+  typingMinSeconds: z.natural().default(2).volatile().description('打字最少等几秒'),
+  typingMaxSeconds: z.natural().default(30).volatile().description('打字最多等几秒'),
+  groupMinGapSeconds: z.natural().default(5).volatile().description('同一个群她两条消息之间至少隔几秒（0 = 不限）'),
+  groupMaxPerWindow: z.natural().default(5).volatile().description('同一个群一段时间里她最多发几条（0 = 不限）'),
+  groupWindowSeconds: z.natural().min(1).default(60).volatile().description('上面那段时间是几秒'),
+  sendMaxWaitSeconds: z.natural().default(120).volatile().description('为了守发言频率最多等几秒，超过就不发了'),
   logLevel: z.union(['debug', 'info', 'warn', 'error']).default('info').volatile().description('日志级别'),
 }) as never
 
@@ -264,6 +282,12 @@ export function apply(ctx: Context, live: LiveConfig): void {
       stt: sttSettings(),
       video: videoSettings(),
       silenceToken: get('silenceToken') ?? '[不发]',
+      pace: {
+        typingPrivate: get('typingPrivate'), typingGroup: get('typingGroup'), charsPerMinute: get('typingCharsPerMinute'),
+        typingMinSeconds: get('typingMinSeconds'), typingMaxSeconds: get('typingMaxSeconds'),
+        groupMinGapSeconds: get('groupMinGapSeconds'), groupMaxPerWindow: get('groupMaxPerWindow'), groupWindowSeconds: get('groupWindowSeconds'),
+        maxWaitSeconds: get('sendMaxWaitSeconds'),
+      },
     }),
     log,
   })
