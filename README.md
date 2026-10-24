@@ -51,7 +51,7 @@
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.8.0
+dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.8.1
 ```
 
 然后在 profile 的 `cordis.patch.yml` 里写配置（行 id 固定是 `napcat-bridge`）：
@@ -59,14 +59,14 @@ dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.8.0
 ```yaml
 - id: napcat-bridge
   config:
-    ws_reverse_host: 127.0.0.1
+    ws_reverse_host: 0.0.0.0
     ws_reverse_port: 6199
     ws_reverse_token: 换成你自己的随机字符串
     workspacePath: /home/you/qq-workspace
 ```
 
 NapCat 那边在「网络配置」里新建一个 **WebSocket 客户端**：
-- 地址填 `ws://127.0.0.1:6199/ws`
+- 地址填 `ws://127.0.0.1:6199/ws`（NapCat 和 dsh 在同一台机器上时；不在同一台就填 dsh 那台机器的地址）
 - Token 和上面的 `ws_reverse_token` 一致
 - 消息格式选 `array`
 

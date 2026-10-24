@@ -95,3 +95,12 @@ test('一键安装：SHA256 对不上时不安装', async () => {
 test('一键安装：不支持的平台直接说明', async () => {
   await assert.rejects(installFfmpeg({ platform: 'darwin', arch: 'arm64' }), /只支持 Linux/)
 })
+
+test('一键安装：连不上 GitHub 时告诉怎么用系统软件源装', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ffmpeg-offline-'))
+  const offline = async () => { throw new TypeError('fetch failed') }
+  await assert.rejects(
+    installFfmpeg({ releaseApi: 'https://api.example.invalid/release', platform: 'linux', arch: 'x64', dir, fetch: offline }),
+    /连不上 GitHub[\s\S]*sudo apt install -y ffmpeg[\s\S]*fetch failed/,
+  )
+})
