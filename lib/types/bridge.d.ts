@@ -43,6 +43,7 @@ export interface BridgeDeps {
         mount(agentCtx: unknown, id?: string): Promise<{
             id: string;
         }>;
+        readonly defaultId?: string;
     } | undefined;
     /** 判断会话日志是否已存在（可选；存在时 resume 而不是 create） */
     persistence(): {

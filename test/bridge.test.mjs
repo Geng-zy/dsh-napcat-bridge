@@ -82,7 +82,7 @@ function harness(over = {}, api = {}, hooks = {}) {
   bridge = new Bridge({
     agents,
     defaultModel: () => ({ currentSelection: () => ({ provider: 'deepseek', model: 'default-model' }) }),
-    presets: () => ({ mount: async () => ({}) }),
+    presets: () => ({ mount: async () => ({}), defaultId: hooks.defaultPreset }),
     persistence: () => undefined,
     media,
     callAction: (a, p) => adapter.bot.callAction(a, p),
@@ -197,6 +197,17 @@ test('按聊天类型选预设和模型：管理员私聊 > 私聊/群聊 > 默�
   await h.groupMsg(9, 555, [at(BOT), text('群里')])
   assert.deepEqual(h.created.map(c => c.meta.agentPreset), ['owner-p', 'base', 'group-p'])
   assert.deepEqual(h.created.map(c => c.agentOptions.model), ['default-model', 'default-model', 'flash-low'])
+})
+
+test('没设预设时用 dsh 当前的默认预设（比如插件二设的「陪伴模式」）', async () => {
+  const h = harness({}, memberInfo, { defaultPreset: 'companion' })
+  await h.privateMsg(Number(ADMIN), [text('主人')])
+  await h.groupMsg(9, 555, [at(BOT), text('群里')])
+  assert.deepEqual(h.created.map(c => c.meta.agentPreset), ['companion', 'companion'])
+  assert.ok(h.created.every(c => typeof c.setup === 'function'), '会挂上预设')
+  const h2 = harness({ presets: { default: '', private: '', group: 'group-p', adminPrivate: '' } }, memberInfo, { defaultPreset: 'companion' })
+  await h2.groupMsg(9, 555, [at(BOT), text('群里')])
+  assert.equal(h2.created[0].meta.agentPreset, 'group-p', '设了的优先')
 })
 
 test('思考等级：主人私聊 high，其他私聊和群 low；设置改了，下一条消息时用新设置接回同一个会话（正在回复时不换）', async () => {

@@ -47,7 +47,7 @@ export interface BridgeDeps {
   /** 新会话用的默认模型（dsh-agent-default-model） */
   defaultModel(): { currentSelection(): { provider: string; model: string; reasoningEffort?: string } | undefined } | undefined
   /** 预设挂载（可选） */
-  presets(): { mount(agentCtx: unknown, id?: string): Promise<{ id: string }> } | undefined
+  presets(): { mount(agentCtx: unknown, id?: string): Promise<{ id: string }>; readonly defaultId?: string } | undefined
   /** 判断会话日志是否已存在（可选；存在时 resume 而不是 create） */
   persistence(): { stat(id: string): Promise<object | undefined> } | undefined
   /** 会话事件来源（ctx.on('session/event')） */
@@ -681,10 +681,10 @@ export class Bridge {
     const sessionId = this.deps.store.get(umo) ?? dshSessionId(umo)
     const isGroup = target.isGroup
     const adminPrivate = !isGroup && settings.admins.includes(target.senderId)
-    // 预设和模型：主人私聊 > 私聊/群聊 > 默认
-    const presetId = (adminPrivate ? settings.presets.adminPrivate : '') || (isGroup ? settings.presets.group : settings.presets.private) || settings.presets.default || undefined
-    const { agentOptions, modelText, chosen, key: modelKey } = this.modelFor(target)
+    // 预设和模型：主人私聊 > 私聊/群聊 > 默认 > dsh 当前的默认预设（网页里选的，没选过就是部署默认）
     const presets = this.deps.presets()
+    const presetId = (adminPrivate ? settings.presets.adminPrivate : '') || (isGroup ? settings.presets.group : settings.presets.private) || settings.presets.default || presets?.defaultId || undefined
+    const { agentOptions, modelText, chosen, key: modelKey } = this.modelFor(target)
     const setup: AgentSetup | undefined = presets !== undefined && presetId !== undefined
       ? (async (agentCtx: unknown) => { await presets.mount(agentCtx, presetId) }) as unknown as AgentSetup
       : undefined
