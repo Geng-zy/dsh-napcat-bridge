@@ -51,7 +51,7 @@
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.8.1
+dsh plugin --profile web add github:Geng-zy/dsh-napcat-bridge#v0.9.0
 ```
 
 然后在 profile 的 `cordis.patch.yml` 里写配置（行 id 固定是 `napcat-bridge`）：
@@ -121,7 +121,8 @@ NapCat 那边在「网络配置」里新建一个 **WebSocket 客户端**：
 | | `uniqueSession` | `false` | 群里每人单独一个会话 |
 | | `agentPreset` | 空 | 默认预设 |
 | | `adminPrivateAgentPreset` / `privateAgentPreset` / `groupAgentPreset` | 空 | 分类型预设 |
-| | `adminPrivateModel` / `privateModel` / `groupModel` | 空 | 分类型模型，写成 `提供方/模型` |
+| | `adminPrivateModel` / `privateModel` / `groupModel` | 空 | 分类型模型，写成 `提供方/模型`（用 API Key 的 DeepSeek 是 `deepseek-official/deepseek-flash`） |
+| | `adminPrivateReasoning` / `privateReasoning` / `groupReasoning` | `high` / `low` / `low` | 分类型思考等级（DeepSeek：`off` / `low` / `high` / `max`）；改了以后，那个会话下一条消息起生效（正在回复的等说完），聊天记录不变 |
 | | `silenceToken` | `[不发]` | 她的回复以这个开头时不发出去（主动唤醒时她决定不说话） |
 | 发消息节奏 | `typingPrivate` / `typingGroup` | `true` / `true` | 私聊、群里模拟打字 |
 | | `typingCharsPerMinute` / `typingMinSeconds` / `typingMaxSeconds` | `60` / `2` / `30` | 打字速度（0 = 不等）、最少和最多等几秒 |

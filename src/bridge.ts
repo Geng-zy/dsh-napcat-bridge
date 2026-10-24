@@ -104,6 +104,8 @@ export interface BridgeSettings {
   presets: { default: string; private: string; group: string; adminPrivate: string }
   /** 新会话用的模型，写成 提供方/模型（空 = 用 dsh 默认模型） */
   models: { private: string; group: string; adminPrivate: string }
+  /** 思考等级（本插件新增）：主人私聊 / 其他私聊 / 群聊；空 = 跟默认模型 */
+  reasoning: { private: string; group: string; adminPrivate: string }
   stt: SttSettings
   video: VideoSettings
   /** 她回复里以这个开头时不发出去（主动唤醒时她决定不说话用） */
@@ -218,6 +220,10 @@ interface Chat {
   info: SessionInfo
   /** 新建的会话，还没交过内容给模型 */
   fresh: boolean
+  /** 建这个会话时用的模型和思考等级（设置改了以后，下一条消息时换成新的） */
+  modelKey: string
+  /** 正在回复（turn/start 到 turn/end 之间），这时不换模型 */
+  running: boolean
 }
 
 /** 建会话需要的 QQ 会话信息（从收到的消息来，或者从 unified_msg_origin 解析出来）。 */
@@ -614,11 +620,21 @@ export class Bridge {
 
   private ensureChat(target: Target): Promise<Chat> {
     const umo = target.umo
-    const existing = this.chats.get(umo)
-    if (existing !== undefined) return Promise.resolve(existing)
     const pending = this.creating.get(umo)
     if (pending !== undefined) return pending
-    const task = this.createChat(target).finally(() => this.creating.delete(umo))
+    const existing = this.chats.get(umo)
+    // 本插件新增：设置里的模型或思考等级改了，等这个会话不在回复时，关掉旧的连接、用新设置接回同一个会话（聊天记录不变）
+    const stale = existing !== undefined && !existing.running && existing.modelKey !== this.modelFor(target).key
+    if (existing !== undefined && !stale) return Promise.resolve(existing)
+    const task = (async () => {
+      if (existing !== undefined) {
+        this.chats.delete(umo)
+        this.bySession.delete(String((existing.handle.agent as Agent).session.id))
+        await existing.handle.dispose().catch(e => this.deps.log('warn', '关闭旧连接失败: ' + errText(e)))
+        this.deps.log('info', umo + '：模型或思考等级改了，换成新设置（同一个会话）')
+      }
+      return this.createChat(target)
+    })().finally(() => this.creating.delete(umo))
     this.creating.set(umo, task)
     return task
   }
@@ -644,6 +660,21 @@ export class Bridge {
     return { sessionId: String((chat.handle.agent as Agent).session.id) }
   }
 
+  /** 这个会话该用的模型和思考等级：主人私聊 > 私聊/群聊 > dsh 默认模型（本插件新增思考等级）。 */
+  private modelFor(target: Target): { agentOptions: { provider: string; model: string; reasoningEffort?: string } | undefined; modelText: string; chosen: { provider: string; model: string } | undefined; key: string } {
+    const settings = this.deps.settings()
+    const isGroup = target.isGroup
+    const adminPrivate = !isGroup && settings.admins.includes(target.senderId)
+    const pick = (v: { private: string; group: string; adminPrivate: string }): string => (adminPrivate ? v.adminPrivate : '') || (isGroup ? v.group : v.private)
+    const modelText = pick(settings.models)
+    const chosen = modelText !== '' ? parseModel(modelText) : undefined
+    if (modelText !== '' && chosen === undefined) this.deps.log('warn', '模型「' + modelText + '」格式不对，应写成 提供方/模型；改用默认模型')
+    const selection = chosen ?? this.deps.defaultModel()?.currentSelection()
+    const effort: string = pick(settings.reasoning) || (selection !== undefined && 'reasoningEffort' in selection ? String(selection.reasoningEffort ?? '') : '')
+    const agentOptions = selection ? { provider: selection.provider, model: selection.model, ...(effort ? { reasoningEffort: effort } : {}) } : undefined
+    return { agentOptions, modelText, chosen, key: agentOptions ? agentOptions.provider + '/' + agentOptions.model + '#' + (agentOptions.reasoningEffort ?? '') : '' }
+  }
+
   private async createChat(target: Target): Promise<Chat> {
     const umo = target.umo
     const settings = this.deps.settings()
@@ -652,11 +683,7 @@ export class Bridge {
     const adminPrivate = !isGroup && settings.admins.includes(target.senderId)
     // 预设和模型：主人私聊 > 私聊/群聊 > 默认
     const presetId = (adminPrivate ? settings.presets.adminPrivate : '') || (isGroup ? settings.presets.group : settings.presets.private) || settings.presets.default || undefined
-    const modelText = (adminPrivate ? settings.models.adminPrivate : '') || (isGroup ? settings.models.group : settings.models.private)
-    const chosen = modelText !== '' ? parseModel(modelText) : undefined
-    if (modelText !== '' && chosen === undefined) this.deps.log('warn', '模型「' + modelText + '」格式不对，应写成 提供方/模型；改用默认模型')
-    const selection = chosen ?? this.deps.defaultModel()?.currentSelection()
-    const agentOptions = selection ? { provider: selection.provider, model: selection.model, ...('reasoningEffort' in selection && selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) } : undefined
+    const { agentOptions, modelText, chosen, key: modelKey } = this.modelFor(target)
     const presets = this.deps.presets()
     const setup: AgentSetup | undefined = presets !== undefined && presetId !== undefined
       ? (async (agentCtx: unknown) => { await presets.mount(agentCtx, presetId) }) as unknown as AgentSetup
@@ -686,9 +713,9 @@ export class Bridge {
         agentOptions: agentOptions as never,
         setup,
       })
-      this.deps.log('info', '新建会话 ' + sessionId + '（' + umo + (presetId ? '，预设 ' + presetId : '') + (chosen ? '，模型 ' + modelText : '') + '）')
+      this.deps.log('info', '新建会话 ' + sessionId + '（' + umo + (presetId ? '，预设 ' + presetId : '') + (chosen ? '，模型 ' + modelText : '') + (agentOptions?.reasoningEffort ? '，思考 ' + agentOptions.reasoningEffort : '') + '）')
     }
-    const chat: Chat = { umo, session: target.session, handle, lastText: '', send: target.send, info, fresh: !exists }
+    const chat: Chat = { umo, session: target.session, handle, lastText: '', send: target.send, info, fresh: !exists, modelKey, running: false }
     this.chats.set(umo, chat)
     this.bySession.set(String((handle.agent as Agent).session.id), umo)
     return chat
@@ -701,6 +728,7 @@ export class Bridge {
     if (chat === undefined) return
     if (event.type === 'turn/start') {
       chat.lastText = ''
+      chat.running = true
     } else if (event.type === 'assistant/message') {
       const text = (event.data.message.content as ReadonlyArray<{ type: string; text?: string }>)
         .filter(b => b.type === 'text')
@@ -708,6 +736,7 @@ export class Bridge {
         .join('')
       if (text.trim() !== '') chat.lastText = text
     } else if (event.type === 'turn/end') {
+      chat.running = false
       const text = chat.lastText
       chat.lastText = ''
       if (text.trim() === '') return

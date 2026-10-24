@@ -131,6 +131,12 @@ export interface BridgeSettings {
         group: string;
         adminPrivate: string;
     };
+    /** 思考等级（本插件新增）：主人私聊 / 其他私聊 / 群聊；空 = 跟默认模型 */
+    reasoning: {
+        private: string;
+        group: string;
+        adminPrivate: string;
+    };
     stt: SttSettings;
     video: VideoSettings;
     /** 她回复里以这个开头时不发出去（主动唤醒时她决定不说话用） */
@@ -259,6 +265,8 @@ export declare class Bridge {
     wake(umo: string, content: ModelPart[] | string): Promise<{
         sessionId: string;
     }>;
+    /** 这个会话该用的模型和思考等级：主人私聊 > 私聊/群聊 > dsh 默认模型（本插件新增思考等级）。 */
+    private modelFor;
     private createChat;
     private onSessionEvent;
     /** 发 'napcat/sent'；监听器出错不影响发送。 */

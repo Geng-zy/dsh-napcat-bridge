@@ -47,6 +47,9 @@ export interface Config {
     privateModel: string;
     groupModel: string;
     adminPrivateModel: string;
+    adminPrivateReasoning: 'off' | 'low' | 'high' | 'max';
+    privateReasoning: 'off' | 'low' | 'high' | 'max';
+    groupReasoning: 'off' | 'low' | 'high' | 'max';
     sttMode: 'off' | 'command' | 'openai';
     sttCommand: string;
     sttApiUrl: string;

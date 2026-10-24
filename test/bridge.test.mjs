@@ -29,6 +29,7 @@ function settings(over = {}) {
     commands: { enabled: true, noPermissionReply: true },
     presets: { default: '', private: '', group: '', adminPrivate: '' },
     models: { private: '', group: '', adminPrivate: '' },
+    reasoning: { private: 'low', group: 'low', adminPrivate: 'high' },
     stt: { mode: 'off', command: '', apiUrl: '', apiKey: '', model: '' },
     video: { enabled: true, maxFrames: 4, secondsPerFrame: 5, maxEdge: 1024, maxMB: 100, maxMinutes: 10, timeoutSeconds: 30, ffmpegPath: '/nonexistent/ffmpeg' },
     silenceToken: '[不发]',
@@ -109,7 +110,8 @@ function harness(over = {}, api = {}, hooks = {}) {
     sessionListener(session, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: reply }] } } })
     sessionListener(session, { type: 'turn/end' })
   }
-  return { followups, created, sent, events, bridge, turn, privateMsg, groupMsg, set: next => { s = settings({ ...over, ...next }) } }
+  const startTurn = sessionId => sessionListener({ id: sessionId }, { type: 'turn/start' })
+  return { followups, created, sent, events, bridge, turn, startTurn, privateMsg, groupMsg, set: next => { s = settings({ ...over, ...next }) } }
 }
 const text = t => ({ type: 'text', data: { text: t } })
 const at = qq => ({ type: 'at', data: { qq: String(qq) } })
@@ -195,6 +197,33 @@ test('按聊天类型选预设和模型：管理员私聊 > 私聊/群聊 > 默�
   await h.groupMsg(9, 555, [at(BOT), text('群里')])
   assert.deepEqual(h.created.map(c => c.meta.agentPreset), ['owner-p', 'base', 'group-p'])
   assert.deepEqual(h.created.map(c => c.agentOptions.model), ['default-model', 'default-model', 'flash-low'])
+})
+
+test('思考等级：主人私聊 high，其他私聊和群 low；设置改了，下一条消息时用新设置接回同一个会话（正在回复时不换）', async () => {
+  const h = harness({}, memberInfo)
+  await h.privateMsg(Number(ADMIN), [text('主人')])
+  await h.privateMsg(8, [text('别人私聊')])
+  await h.groupMsg(9, 555, [at(BOT), text('群里')])
+  assert.deepEqual(h.created.map(c => c.agentOptions.reasoningEffort), ['high', 'low', 'low'])
+  const ownerId = String(h.created[0].sessionId)
+  // 设置没变：同一个连接接着用
+  await h.privateMsg(Number(ADMIN), [text('再说一句')])
+  assert.equal(h.created.length, 3)
+  // 改成 max：下一条消息时换成新设置，会话 id 不变
+  h.set({ reasoning: { private: 'low', group: 'low', adminPrivate: 'max' } })
+  await h.privateMsg(Number(ADMIN), [text('换了吗')])
+  assert.equal(h.created.length, 4)
+  assert.equal(String(h.created[3].sessionId), ownerId)
+  assert.equal(h.created[3].agentOptions.reasoningEffort, 'max')
+  // 正在回复时改设置：先不换，等说完以后的下一条再换
+  h.startTurn(ownerId)
+  h.set({ reasoning: { private: 'low', group: 'low', adminPrivate: 'off' } })
+  await h.privateMsg(Number(ADMIN), [text('她还在回复时来的')])
+  assert.equal(h.created.length, 4, '正在回复，不换')
+  h.turn(ownerId, '说完了')
+  await h.privateMsg(Number(ADMIN), [text('说完以后')])
+  assert.equal(h.created.length, 5)
+  assert.equal(h.created[4].agentOptions.reasoningEffort, 'off')
 })
 
 test('群里每人单独会话', async () => {
